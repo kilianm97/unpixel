@@ -180,6 +180,7 @@ assert.deepEqual(cookieDomains('www.unpixel.ch'), ['www.unpixel.ch', '.www.unpix
 // Batch: original size within the canvas limit, unique names in the ZIP
 assert.deepEqual(batchSize(4000, 3000), { w: 4000, h: 3000 })
 assert.deepEqual(batchSize(10000, 20000), { w: 4000, h: 8000 })
+assert.deepEqual(uniqueNames(['../../evil.webp', 'C:\\x.webp', '.webp']), ['_.._evil.webp', 'C__x.webp', 'webp'])
 assert.deepEqual(uniqueNames(['a.webp', 'A.webp', 'b.webp', 'a.webp', 'a-2.webp']), ['a.webp', 'A-2.webp', 'b.webp', 'a-3.webp', 'a-2-2.webp'])
 
 console.log('selftest ok')

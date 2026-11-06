@@ -91,7 +91,9 @@ export function batchSize(W, H) {
 // Same base name twice in a ZIP would overwrite: photo.webp, photo-2.webp…
 export function uniqueNames(names) {
   const seen = new Map()
-  return names.map((n) => {
+  return names.map((raw) => {
+    // Names can come from a share: no folders, drive letters or control characters inside the ZIP
+    const n = raw.replace(/[\\/:\x00-\x1f]/g, '_').replace(/^\.+/, '') || 'image'
     const dot = n.lastIndexOf('.')
     const [stem, ext] = dot > 0 ? [n.slice(0, dot), n.slice(dot)] : [n, '']
     let name = n

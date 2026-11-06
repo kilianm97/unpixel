@@ -18,7 +18,9 @@ self.addEventListener('activate', (e) =>
 // "Partager vers unpixel" (manifest share_target): keep the files in a cache the page reads on ?shared.
 // Not named unpixel-… so a new version's activation doesn't wipe it.
 async function receiveShare(request) {
-  const files = (await request.formData()).getAll('files').filter((f) => f instanceof File)
+  // A real share is started by the browser (none / same-origin): another site posting here is ignored
+  if (request.headers.get('sec-fetch-site') === 'cross-site') return Response.redirect(new URL(BASE, location.origin).href, 303)
+  const files = (await request.formData()).getAll('files').filter((f) => f instanceof File).slice(0, 50)
   await caches.delete('share-inbox')
   const inbox = await caches.open('share-inbox')
   await Promise.all(
