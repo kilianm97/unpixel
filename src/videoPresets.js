@@ -59,6 +59,23 @@ export function unreadableVideoMessage(codes) {
   return 'Votre navigateur ne sait pas lire le codec de cette vidéo. Exportez-la en H.264 (MP4), puis déposez ce fichier.'
 }
 
+// Social video formats: crop the frame to an aspect (width / height) before encoding.
+export const FRAMES = [
+  { id: 'original', label: 'Original' },
+  { id: '9:16', label: 'Vertical 9:16', ratio: 9 / 16 },
+  { id: '1:1', label: 'Carré 1:1', ratio: 1 },
+]
+
+// Largest even-sized area with that aspect; pos (0..1) slides it along the axis that has room to spare.
+export function videoCrop(w, h, ratio, pos = 0.5) {
+  if (!ratio) return null
+  const even = (v) => Math.max(2, Math.floor(v / 2) * 2)
+  const cw = w / h > ratio ? even(h * ratio) : even(w)
+  const ch = w / h > ratio ? even(h) : even(w / ratio)
+  const at = (room) => Math.round((room * pos) / 2) * 2 // even offsets too: H.264 stores colour per 2×2 block
+  return { left: at(w - cw), top: at(h - ch), width: cw, height: ch }
+}
+
 // LightVid caps the video bitrate with -maxrate; true when a quantizer-based encode went over that cap.
 export const overCap = (bytes, seconds, preset, muted) =>
   seconds > 0 && (bytes * 8) / seconds - (muted ? 0 : preset.audio) > preset.maxrate * 1.15

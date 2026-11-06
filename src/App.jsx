@@ -1,10 +1,13 @@
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence, useMotionValue, useMotionValueEvent, useTransform, animate } from 'motion/react'
-import { dragRect, spanRect, cropPixels, isFull, FULL } from './crop.js'
-import { findQuality, pixelsOf } from './compress.js'
+import { cropPixels, isFull, FULL } from './crop.js'
+import { Cropper } from './Cropper.jsx'
+import { FORMATS, formatOf, fmt, draw, toBlob, exportImage, decode, MAX_SIDE } from './imageExport.js'
+import { Batch } from './Batch.jsx'
 import logoUrl from './logo.svg'
 import { HomeSections, InstallIcon } from './Home.jsx'
 import { Footer } from './Footer.jsx'
+import { Segmented, Switch, Slider } from './ui.jsx'
 import { CookieBanner } from './CookieBanner.jsx'
 import { ColorSwatch } from './ColorPicker.jsx'
 import { recolorSvg } from './trace.js'
@@ -25,65 +28,14 @@ import { isVideoFile } from './videoPresets.js'
 const workScale = (w, h) => Math.min(Math.max(4, 1000 / Math.max(w, h)), Math.sqrt(8e6 / (w * h)))
 // Below this size a logo has lost its fine details: the tracer can only redraw what the pixels still hold
 const TINY_LOGO = 300
-const MAX_SIDE = 8000 // export size cap: keeps canvases within browser limits
 const spring = { type: 'spring', stiffness: 260, damping: 30 }
+const SHARE_INBOX = 'share-inbox' // filled by sw.js on "Partager vers unpixel"
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
-const FORMATS = {
-  png: { type: 'image/png', label: 'PNG', ext: 'png', lossy: false },
-  jpeg: { type: 'image/jpeg', label: 'JPG', ext: 'jpg', lossy: true },
-  webp: { type: 'image/webp', label: 'WebP', ext: 'webp', lossy: true },
-}
-const formatOf = (type) => Object.keys(FORMATS).find((k) => FORMATS[k].type === type) ?? 'png'
-const fmt = (b) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} Ko` : `${(b / 1024 / 1024).toFixed(1).replace('.', ',')} Mo`)
-
-async function decode(file) {
-  if (!file?.type.startsWith('image/')) throw new Error('Ce fichier n’est pas une image. Utilisez un PNG, JPG ou WebP.')
-  const url = URL.createObjectURL(file)
-  const img = new Image()
-  img.src = url
-  try {
-    await img.decode()
-  } catch {
-    URL.revokeObjectURL(url)
-    throw new Error('Impossible de lire cette image. Essayez de l’exporter en PNG.')
-  }
-  if (!img.naturalWidth || !img.naturalHeight) {
-    URL.revokeObjectURL(url)
-    throw new Error('Cette image n’a pas de dimensions. Exportez-la en PNG.')
-  }
-  const name = file.name.replace(/\.[^.]+$/, '') || 'image'
-  if (file.type === 'image/svg+xml') {
-    // An SVG without width/height decodes at a default 150 px and ignores source rectangles in drawImage:
-    // render it once, large and sharp, and work from that bitmap like any other image.
-    const k = 2000 / Math.max(img.naturalWidth, img.naturalHeight)
-    const c = document.createElement('canvas')
-    c.width = Math.round(img.naturalWidth * k)
-    c.height = Math.round(img.naturalHeight * k)
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-    URL.revokeObjectURL(url)
-    const raster = URL.createObjectURL(await toBlob(c, 'image/png'))
-    const bmp = new Image()
-    bmp.src = raster
-    await bmp.decode()
-    return { img: bmp, url: raster, name, bytes: file.size, type: 'image/png' }
-  }
-  return { img, url, name, bytes: file.size, type: file.type }
-}
 
 const region = (img, crop) =>
   crop ? cropPixels(crop, img.naturalWidth, img.naturalHeight) : { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }
 
-function draw(img, r, w, h, background) {
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
-  if (background) (ctx.fillStyle = background), ctx.fillRect(0, 0, w, h)
-  ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(img, r.x, r.y, r.w, r.h, 0, 0, w, h)
-  return canvas
-}
 
 // [id, label, short label for small screens]
 const TOOLS = [
@@ -106,7 +58,7 @@ const HERO = {
   image: {
     title: 'Des images légères, sans perte visible.',
     text: 'Rognez, redimensionnez et compressez vos images en JPG ou WebP : unpixel trouve le réglage le plus léger sans différence visible. Vos fichiers ne quittent jamais votre ordinateur.',
-    drop: 'Déposez votre image ici',
+    drop: 'Déposez vos images ici',
   },
   svg: {
     title: 'Votre logo, net à toutes les tailles.',
@@ -120,10 +72,6 @@ const HERO = {
   },
 }
 
-const toBlob = (canvas, type, quality) =>
-  new Promise((ok, fail) =>
-    canvas.toBlob((b) => (b ? ok(b) : fail(new Error('L’export a échoué. Essayez une taille plus petite.'))), type, quality),
-  )
 
 // Pixels for the tracer: always the whole image (the logo tool has no crop).
 function traceData(img) {
@@ -146,6 +94,7 @@ export default function App() {
   const [src, setSrc] = useState(null)
   const [recolor, setRecolor] = useState({}) // traced colour → replacement, logo tool only
   const [video, setVideo] = useState(null)
+  const [batch, setBatch] = useState(null) // several images processed together: [{ id, file, url }]
   const [mode, setModeState] = useState(toolFromHash)
   const [opts, setOpts] = useState({ colors: 8, detail: 3, smooth: 2, corners: 2, transparent: true })
   const [out, setOut] = useState({ format: 'png', compression: 'optimal', quality: 80 })
@@ -203,9 +152,27 @@ export default function App() {
     return () => removeEventListener('hashchange', onHash)
   }, [])
 
-  async function open(file) {
+  // Entry point for every way files arrive (picker, drop, paste, "Ouvrir avec", share). forMode: the tool to open them in.
+  function openFiles(list, forMode = mode) {
+    const files = [...list]
+    if (!files.length) return
+    if (forMode !== mode) resetRef.current?.(), setMode(forMode)
+    if (forMode === 'image' && (files.length > 1 || batch)) {
+      const images = files.filter((f) => f.type.startsWith('image/'))
+      if (!images.length) return setError('Ces fichiers ne sont pas des images. Utilisez des PNG, JPG ou WebP.')
+      if (src) reset()
+      setError('')
+      const added = images.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) })) // url: thumbnail and crop source
+      return setBatch((b) => [...(b ?? []), ...added])
+    }
+    open(files[0], forMode)
+  }
+  const openRef = useRef(openFiles)
+  openRef.current = openFiles
+
+  async function open(file, forMode = mode) {
     setError('')
-    if (mode === 'video') {
+    if (forMode === 'video') {
       if (!isVideoFile(file)) return setError('Ce fichier n’est pas une vidéo. Utilisez un MP4, MOV, MKV ou WebM.')
       return setVideo((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url: URL.createObjectURL(file), name: file.name }))
     }
@@ -229,23 +196,25 @@ export default function App() {
     }
   }
 
-  async function applyCrop(rect) {
+  async function applyCrop(rect, preset) {
     setCropping(false)
-    const crop = isFull(rect) ? null : rect
+    const crop = isFull(rect) && !preset?.ratio ? null : rect
     const url = crop ? await cropPreview(src.img, crop) : src.fullUrl
     if (src.url !== src.fullUrl) URL.revokeObjectURL(src.url)
     const r = region(src.img, crop)
-    setSrc({ ...src, crop, url })
-    setSize({ w: r.w, h: r.h })
+    setSrc({ ...src, crop, url, cropPreset: preset?.id })
+    setSize(preset?.size ? { w: preset.size[0], h: preset.size[1] } : { w: r.w, h: r.h })
     setRaster(null)
   }
 
   const resetRef = useRef(null)
-  const loaded = mode === 'video' ? video : src
+  const loaded = mode === 'video' ? video : (batch ?? src)
   busyWithFile.current = !!loaded
   resetRef.current = loaded ? reset : null
   function reset() {
     if (video) URL.revokeObjectURL(video.url), setVideo(null)
+    batch?.forEach((it) => URL.revokeObjectURL(it.url))
+    setBatch(null)
     if (!src) return
     revokeSrc(src)
     stopTrace()
@@ -290,9 +259,32 @@ export default function App() {
   }
 
   useEffect(() => {
-    const onPaste = (e) => e.clipboardData?.files[0] && open(e.clipboardData.files[0])
+    const onPaste = (e) => e.clipboardData?.files.length && openRef.current(e.clipboardData.files)
     addEventListener('paste', onPaste)
     return () => removeEventListener('paste', onPaste)
+  }, [])
+
+  // "Ouvrir avec unpixel" and "Partager vers unpixel" (installed app): videos go to the video tool, images to the image tool.
+  useEffect(() => {
+    const route = (files) => {
+      const videos = files.filter(isVideoFile)
+      openRef.current(videos.length ? videos : files, videos.length ? 'video' : 'image')
+    }
+    window.launchQueue?.setConsumer(async ({ files }) => files?.length && route(await Promise.all(files.map((h) => h.getFile()))))
+    // The service worker kept the shared files in a cache and opened ?shared
+    if (!new URLSearchParams(location.search).has('shared')) return
+    history.replaceState(null, '', location.pathname + location.hash)
+    ;(async () => {
+      const inbox = await caches.open(SHARE_INBOX)
+      const files = await Promise.all(
+        (await inbox.keys()).map(async (req) => {
+          const res = await inbox.match(req)
+          return new File([await res.blob()], decodeURIComponent(res.headers.get('x-name') ?? 'fichier'), { type: res.headers.get('content-type') ?? '' })
+        }),
+      )
+      await caches.delete(SHARE_INBOX)
+      if (files.length) route(files)
+    })().catch(() => setError('Les fichiers partagés n’ont pas pu être ouverts. Ouvrez-les depuis unpixel.'))
   }, [])
 
   // Vector: trace in the worker
@@ -316,21 +308,9 @@ export default function App() {
     setError('')
     const t = setTimeout(async () => {
       try {
-        const f = FORMATS[out.format]
-        const canvas = draw(src.img, region(src.img, src.crop), size.w, size.h, f.type === 'image/jpeg' ? '#fff' : null)
-        const encode = (q) => toBlob(canvas, f.type, q / 100)
-        let blob, q
-        if (!f.lossy) blob = await toBlob(canvas, f.type)
-        else if (out.compression === 'none') blob = await encode(100)
-        else if (out.compression === 'manual') blob = await encode((q = out.quality))
-        else {
-          const ref = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
-          const found = await findQuality(encode, (b) => pixelsOf(b, canvas.width, canvas.height), ref, { cancelled: () => cancelled })
-          if (!found) return
-          ;({ blob, q } = found)
-        }
-        if (cancelled) return
-        if (blob.type !== f.type) throw new Error(`Votre navigateur ne sait pas créer de ${f.label}. Choisissez un autre format.`)
+        const done = await exportImage(src.img, region(src.img, src.crop), size.w, size.h, out, () => cancelled)
+        if (!done || cancelled) return
+        const { blob, q } = done
         url = URL.createObjectURL(blob)
         setRaster({ url, bytes: blob.size, q })
       } catch (e) {
@@ -356,7 +336,7 @@ export default function App() {
   const dropProps = {
     onDragOver: (e) => (e.preventDefault(), setDragging(true)),
     onDragLeave: (e) => e.currentTarget.contains(e.relatedTarget) || setDragging(false),
-    onDrop: (e) => (e.preventDefault(), setDragging(false), open(e.dataTransfer.files[0])),
+    onDrop: (e) => (e.preventDefault(), setDragging(false), openFiles(e.dataTransfer.files)),
   }
 
   const brand = <img src={logoUrl} alt="unpixel" className="logo" width="132" height="30" />
@@ -380,7 +360,7 @@ export default function App() {
         )}
         {loaded ? (
           <button className="ghost" onClick={() => fileInput.current.click()}>
-            {mode === 'video' ? 'Changer de vidéo' : 'Changer d’image'}
+            {mode === 'video' ? 'Changer de vidéo' : batch ? 'Ajouter des images' : 'Changer d’image'}
           </button>
         ) : (
           installPrompt && (
@@ -401,8 +381,9 @@ export default function App() {
         ref={fileInput}
         type="file"
         accept={mode === 'video' ? 'video/*,.mkv,.mov,.avi,.flv,.wmv' : 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml'}
+        multiple={mode === 'image'}
         hidden
-        onChange={(e) => (open(e.target.files[0]), (e.target.value = ''))}
+        onChange={(e) => (openFiles(e.target.files), (e.target.value = ''))}
       />
 
       <AnimatePresence mode="wait">
@@ -444,7 +425,9 @@ export default function App() {
                 <span className="drop-hint">
                   {mode === 'video'
                     ? 'ou cliquez pour choisir un fichier MP4, MOV, MKV ou WebM.'
-                    : 'ou cliquez pour choisir un fichier. Vous pouvez aussi coller une image avec Ctrl+V.'}
+                    : mode === 'image'
+                      ? 'Une seule ou toutes d’un coup, regroupées dans un ZIP. Ou cliquez pour choisir.'
+                      : 'ou cliquez pour choisir un fichier. Vous pouvez aussi coller une image avec Ctrl+V.'}
                 </span>
               </DropZone>
               {error && (
@@ -455,6 +438,8 @@ export default function App() {
             </section>
             {!installedApp && <HomeSections mode={mode} onPick={pickTool} />}
           </motion.main>
+        ) : batch ? (
+          <Batch key="batch" items={batch} onRemove={(id) => (URL.revokeObjectURL(batch.find((it) => it.id === id).url), setBatch((b) => (b.length > 1 ? b.filter((it) => it.id !== id) : null)))} />
         ) : mode === 'video' ? (
           <Suspense key={video.url} fallback={<main className="work" aria-busy="true" />}>
             <VideoTool video={video} />
@@ -465,6 +450,7 @@ export default function App() {
               <Cropper
                 url={src.fullUrl}
                 initial={src.crop ?? FULL}
+                initialPreset={src.cropPreset}
                 natural={{ w: src.img.naturalWidth, h: src.img.naturalHeight }}
                 onApply={applyCrop}
                 onCancel={() => setCropping(false)}
@@ -584,81 +570,6 @@ function Compare({ original, output, label, busy, busyText }) {
           </motion.span>
         )}
       </AnimatePresence>
-    </section>
-  )
-}
-
-function Cropper({ url, initial, natural, onApply, onCancel }) {
-  const [r, setR] = useState(initial)
-  const wrap = useRef(null)
-  const drag = useRef(null)
-  const point = (e) => {
-    const b = wrap.current.getBoundingClientRect()
-    return { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height }
-  }
-  const start = (mode) => (e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    wrap.current.setPointerCapture(e.pointerId)
-    drag.current = { mode, p0: point(e), r0: r }
-  }
-  const move = (e) => {
-    const d = drag.current
-    if (!d) return
-    const p = point(e)
-    setR(d.mode === 'new' ? spanRect(d.p0, p) : dragRect(d.mode, d.r0, p.x - d.p0.x, p.y - d.p0.y))
-  }
-  const end = () => (drag.current = null)
-  const onKey = (e) => {
-    const s = e.shiftKey ? 0.05 : 0.01
-    const d = { ArrowLeft: [-s, 0], ArrowRight: [s, 0], ArrowUp: [0, -s], ArrowDown: [0, s] }[e.key]
-    if (!d) return
-    e.preventDefault()
-    setR((r) => dragRect(e.altKey ? 'se' : 'move', r, ...d))
-  }
-  const px = cropPixels(r, natural.w, natural.h)
-  const [x1, y1, x2, y2] = [r.x, r.y, r.x + r.w, r.y + r.h].map((v) => `${v * 100}%`)
-
-  return (
-    <section className="stage cropper" aria-label="Rogner l’image">
-      <div className="crop-area">
-        <div ref={wrap} className="crop-wrap" onPointerDown={start('new')} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
-          <img src={url} alt="Image à rogner" draggable="false" />
-          <div
-            className="crop-shade"
-            style={{
-              clipPath: `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x1} ${y1}, ${x2} ${y1}, ${x2} ${y2}, ${x1} ${y2}, ${x1} ${y1})`,
-            }}
-          />
-          <div
-            className="crop-rect"
-            style={{ left: x1, top: y1, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
-            onPointerDown={start('move')}
-            onKeyDown={onKey}
-            tabIndex={0}
-            role="group"
-            aria-label="Zone gardée. Flèches pour déplacer, Alt + flèches pour redimensionner."
-          >
-            {['nw', 'ne', 'sw', 'se'].map((c) => (
-              <span key={c} className={`crop-handle ${c}`} onPointerDown={start(c)} />
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="crop-bar">
-        <span className="crop-size">
-          {px.w} × {px.h} px
-        </span>
-        <button className="ghost" onClick={() => setR(FULL)}>
-          Image entière
-        </button>
-        <button className="ghost" onClick={onCancel}>
-          Annuler
-        </button>
-        <motion.button className="primary small" onClick={() => onApply(r)} whileTap={{ scale: 0.97 }}>
-          Rogner
-        </motion.button>
-      </div>
     </section>
   )
 }
@@ -908,46 +819,6 @@ function Panel({
         {copied === 'error' ? 'Le presse-papiers est bloqué par le navigateur.' : copied && copied !== 'code' ? `${copied} copié` : ''}
       </p>
     </aside>
-  )
-}
-
-function Segmented({ label, value, options, onChange }) {
-  return (
-    <div className="seg" role="radiogroup" aria-label={label}>
-      {options.map(([v, text]) => (
-        <button key={v} type="button" role="radio" aria-checked={value === v} className="seg-opt" onClick={() => onChange(v)}>
-          {value === v && <motion.span layoutId={`seg-${label}`} className="seg-pill" transition={spring} />}
-          <span className="seg-text">{text}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function Switch({ checked, onChange, label, hint, disabled }) {
-  return (
-    <label className="switch">
-      <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} />
-      <span className="track">
-        <motion.span className="thumb" layout transition={spring} />
-      </span>
-      <span>
-        {label}
-        {hint && <span className="hint switch-hint">{hint}</span>}
-      </span>
-    </label>
-  )
-}
-
-function Slider({ label, hint, value, ...props }) {
-  return (
-    <label className="slider">
-      <span className="slider-head">
-        {label} <output>{value}</output>
-      </span>
-      <input type="range" value={value} {...props} style={{ '--p': `${((value - props.min) / (props.max - props.min)) * 100}%` }} />
-      <span className="hint">{hint}</span>
-    </label>
   )
 }
 

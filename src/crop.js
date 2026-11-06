@@ -27,3 +27,44 @@ export function cropPixels(r, W, H) {
 }
 
 export const isFull = (r) => r.x <= 0 && r.y <= 0 && r.w >= 1 && r.h >= 1
+
+// Social formats. `ratio` is width / height in pixels; `size` also sets the exact export size.
+export const CROP_PRESETS = [
+  { id: 'free', label: 'Libre' },
+  { id: '1:1', label: 'Carré 1:1', ratio: 1 },
+  { id: '4:5', label: 'Portrait 4:5', ratio: 4 / 5 },
+  { id: '9:16', label: 'Story 9:16', ratio: 9 / 16 },
+  { id: '16:9', label: 'Paysage 16:9', ratio: 16 / 9 },
+  { id: 'og', label: 'Aperçu de lien 1200 × 630', ratio: 1200 / 630, size: [1200, 630] },
+]
+
+// A pixel ratio expressed in fraction space (fractions of a W×H image)
+export const fractionAspect = (ratio, W, H) => (ratio * H) / W
+
+// Largest centred rectangle with that aspect
+export function fitAspect(k) {
+  const w = k < 1 ? k : 1
+  const h = k < 1 ? 1 : 1 / k
+  return { x: (1 - w) / 2, y: (1 - h) / 2, w, h }
+}
+
+// Corner drag that keeps aspect k: the opposite corner stays put, the larger pointer move wins.
+export function dragRectAspect(mode, r, dx, dy, k) {
+  if (mode === 'move') return dragRect('move', r, dx, dy)
+  const west = mode.includes('w'), north = mode.includes('n')
+  const ax = west ? r.x + r.w : r.x, ay = north ? r.y + r.h : r.y
+  const dw = west ? -dx : dx, dh = (north ? -dy : dy) * k
+  const maxW = Math.min(west ? ax : 1 - ax, (north ? ay : 1 - ay) * k)
+  const w = clamp(r.w + (Math.abs(dw) > Math.abs(dh) ? dw : dh), Math.min(MIN, maxW), maxW)
+  const h = w / k
+  return { x: west ? ax - w : ax, y: north ? ay - h : ay, w, h }
+}
+
+// Rectangle drawn from point a towards b, keeping aspect k
+export function spanRectAspect(a, b, k) {
+  const right = b.x >= a.x, down = b.y >= a.y
+  const maxW = Math.min(right ? 1 - a.x : a.x, (down ? 1 - a.y : a.y) * k)
+  const w = clamp(Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y) * k), Math.min(MIN, maxW), maxW)
+  const h = w / k
+  return { x: right ? a.x : a.x - w, y: down ? a.y : a.y - h, w, h }
+}

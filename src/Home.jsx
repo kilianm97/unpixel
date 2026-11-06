@@ -24,8 +24,8 @@ const FEATURES = {
     lead: 'unpixel essaie plusieurs réglages et garde le plus léger qui reste identique à l’œil. La démo ci-contre est calculée en direct, dans votre navigateur.',
     points: [
       ['Compression optimale', 'le réglage le plus léger sans différence visible, choisi pour vous.'],
-      ['Rognez et redimensionnez', 'au pixel près, proportions gardées.'],
-      ['JPG, WebP ou PNG', 'selon votre usage, web ou impression.'],
+      ['Rognez et redimensionnez', 'au pixel près, ou en un clic aux formats des réseaux sociaux.'],
+      ['Plusieurs images d’un coup', 'mêmes réglages en JPG, WebP ou PNG, récupérées dans un seul ZIP.'],
     ],
   },
   svg: {
@@ -47,7 +47,7 @@ const FEATURES = {
     lead: 'Gardez seulement le passage utile, choisissez la qualité, et partagez un MP4 lisible partout.',
     points: [
       ['Coupe précise', 'au dixième de seconde, à la souris ou au clavier.'],
-      ['Trois préréglages', 'du fichier le plus léger à la qualité maximale.'],
+      ['Trois préréglages', 'du plus léger à la qualité maximale, en vertical 9:16 ou carré si besoin.'],
       ['MP4 H.264 + AAC', 'lisible sur tous les appareils et réseaux sociaux.'],
     ],
   },

@@ -1,10 +1,11 @@
 // Run with `npm test`. Checks the color/mask logic (potrace itself runs in the browser worker).
 import assert from 'node:assert/strict'
 import { seedPalette, labelPixels, dropBackground, mask, colorLayers, assembleSvg, edgeCount, workParams, recolorSvg } from '../src/trace.js'
-import { dragRect, spanRect, cropPixels, isFull, FULL, MIN } from '../src/crop.js'
+import { dragRect, spanRect, cropPixels, isFull, FULL, MIN, CROP_PRESETS, fractionAspect, fitAspect, dragRectAspect, spanRectAspect } from '../src/crop.js'
 import { psnr, findQuality } from '../src/compress.js'
+import { batchSize, uniqueNames } from '../src/imageExport.js'
 import { parseConsent, serializeConsent, consentMode, wantsGtm, isGtmId, isTrackingCookie, cookieDomains } from '../src/consent.js'
-import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, isVideoFile, sampleEntryCodes, unreadableVideoMessage } from '../src/videoPresets.js'
+import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, isVideoFile, sampleEntryCodes, unreadableVideoMessage, videoCrop } from '../src/videoPresets.js'
 
 // Red ring + red center dot on white; white disc inside the ring. Edges get a few anti-aliasing pixels.
 const w = 120, h = 120
@@ -81,6 +82,12 @@ const box = mask(Uint8Array.from({ length: 36 }, (_, p) => (p % 6 >= 1 && p % 6 
 assert.equal(edgeCount(box, 6), 15, 'contour pixels counted')
 assert.equal(edgeCount(new Uint8ClampedArray(36 * 4).fill(255), 6), 0, 'empty mask has no contour')
 
+// Social video crop
+assert.deepEqual(videoCrop(1920, 1080, 9 / 16), { left: 658, top: 0, width: 606, height: 1080 }, 'vertical from landscape, centred, even size and offset')
+assert.deepEqual(videoCrop(1920, 1080, 9 / 16, 0), { left: 0, top: 0, width: 606, height: 1080 }, 'slid to the left')
+assert.deepEqual(videoCrop(1080, 1920, 1, 1), { left: 0, top: 840, width: 1080, height: 1080 }, 'square from portrait, slid down')
+assert.equal(videoCrop(1920, 1080, null), null, 'original: no crop')
+
 // Unreadable video: name the real codec
 const stsdBox = (code) => Uint8Array.from([0, 0, 0, 40, ...Buffer.from('stsd'), 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 24, ...Buffer.from(code), 0, 0, 0, 0])
 assert.deepEqual(sampleEntryCodes(Uint8Array.from([...stsdBox('ap4h'), ...stsdBox('tmcd')])), ['ap4h', 'tmcd'])
@@ -102,6 +109,21 @@ assert.ok(tiny.smooth / 27 < 0.15, 'tiny logo: smoothing stays far below one sou
 assert.ok(tiny.potrace.turdsize / 27 ** 2 < 1.3, 'tiny logo: specks removed only below ~1 source px²')
 assert.equal(big.potrace.opttolerance, 0.2, 'normal logo: curve tolerance unchanged')
 assert.ok(Math.abs(tiny.potrace.opttolerance / 27 - 0.2 / 2.25) < 1e-9, 'tiny logo: same tolerance in source pixels')
+
+// Social crop formats keep their pixel ratio
+const pxRatio = (r, W, H) => (r.w * W) / (r.h * H)
+const k916 = fractionAspect(9 / 16, 1920, 1080)
+const story = fitAspect(k916)
+assert.ok(Math.abs(pxRatio(story, 1920, 1080) - 9 / 16) < 1e-9 && story.h === 1 && Math.abs(story.x + story.w / 2 - 0.5) < 1e-9, 'story: full height, centred')
+const square = fitAspect(fractionAspect(1, 1080, 1920))
+assert.ok(Math.abs(pxRatio(square, 1080, 1920) - 1) < 1e-9 && square.w === 1, 'square in a portrait photo: full width')
+const grown = dragRectAspect('se', story, 0.5, 0.5, k916)
+assert.ok(Math.abs(pxRatio(grown, 1920, 1080) - 9 / 16) < 1e-9 && grown.y + grown.h <= 1 + 1e-9 && grown.x + grown.w <= 1 + 1e-9, 'corner drag keeps ratio and stays inside')
+const small = dragRectAspect('nw', { x: 0.4, y: 0.2, w: 0.2, h: 0.2 / k916 }, 0.1, 0.05, k916)
+assert.ok(Math.abs(pxRatio(small, 1920, 1080) - 9 / 16) < 1e-9 && Math.abs(small.x + small.w - 0.6) < 1e-9, 'opposite corner stays put')
+const drawn = spanRectAspect({ x: 0.9, y: 0.9 }, { x: 0.2, y: 0.85 }, fractionAspect(1, 1920, 1080))
+assert.ok(Math.abs(pxRatio(drawn, 1920, 1080) - 1) < 1e-9 && drawn.x >= 0 && drawn.y >= 0 && Math.abs(drawn.x + drawn.w - 0.9) < 1e-9, 'drawn leftwards, clamped, square')
+assert.deepEqual(CROP_PRESETS.find((p) => p.id === 'og').size, [1200, 630])
 
 // Optimal compression search
 const ref = new Uint8ClampedArray(400).fill(100)
@@ -154,5 +176,10 @@ assert.equal(consentMode({ audience: true, marketing: true }).ad_storage, 'denie
 assert.ok(isGtmId('GTM-ABC1234') && !isGtmId('') && !isGtmId('GTM-abc') && !isGtmId('G-ABC1234') && !isGtmId(undefined))
 assert.ok(isTrackingCookie('_ga') && isTrackingCookie('_ga_ABC123') && isTrackingCookie('_gcl_au') && !isTrackingCookie('session'))
 assert.deepEqual(cookieDomains('www.unpixel.ch'), ['www.unpixel.ch', '.www.unpixel.ch', '.unpixel.ch'])
+
+// Batch: original size within the canvas limit, unique names in the ZIP
+assert.deepEqual(batchSize(4000, 3000), { w: 4000, h: 3000 })
+assert.deepEqual(batchSize(10000, 20000), { w: 4000, h: 8000 })
+assert.deepEqual(uniqueNames(['a.webp', 'A.webp', 'b.webp', 'a.webp', 'a-2.webp']), ['a.webp', 'A-2.webp', 'b.webp', 'a-3.webp', 'a-2-2.webp'])
 
 console.log('selftest ok')

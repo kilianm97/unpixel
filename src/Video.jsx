@@ -4,7 +4,8 @@ import {
   Input, BlobSource, ALL_FORMATS, Output, Mp4OutputFormat, BufferTarget, Conversion, Quality, CanvasSink,
   canEncodeAudio, ConversionCanceledError, UnsupportedInputFormatError,
 } from 'mediabunny'
-import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, sampleEntryCodes, unreadableVideoMessage } from './videoPresets.js'
+import { Switch } from './ui.jsx'
+import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, sampleEntryCodes, unreadableVideoMessage, FRAMES, videoCrop } from './videoPresets.js'
 
 const spring = { type: 'spring', stiffness: 260, damping: 30 }
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -35,11 +36,12 @@ function discardMessage(discarded) {
 }
 
 // One LightVid-style encode: quantizer (≈ CRF) first; if the result breaks the preset's -maxrate, a second pass at that bitrate.
-async function compress(file, preset, { trim, duration, mute, onProgress, onConversion }) {
+async function compress(file, preset, { trim, duration, mute, crop, onProgress, onConversion }) {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS })
   try {
     const track = await input.getPrimaryVideoTrack()
-    const { width, height } = targetSize(track.displayWidth, track.displayHeight, preset.height)
+    // A social format crops first (in display pixels), then the preset sizes the cropped frame
+    const { width, height } = crop ? targetSize(crop.width, crop.height, preset.height) : targetSize(track.displayWidth, track.displayHeight, preset.height)
     const audioCodec = (await canEncodeAudio('aac', { numberOfChannels: 2, sampleRate: 48000 })) ? 'aac' : 'opus'
     const full = trim.start <= 0 && trim.end >= duration
     let audioLost = false
@@ -51,7 +53,7 @@ async function compress(file, preset, { trim, duration, mute, onProgress, onConv
         output,
         tracks: 'primary',
         trim: full ? undefined : { start: trim.start, end: trim.end },
-        video: { codec: 'avc', width, height, fit: 'fill', quality, forceTranscode: true },
+        video: { codec: 'avc', width, height, fit: 'fill', crop: crop ?? undefined, quality, forceTranscode: true },
         audio: mute ? { discard: true } : { codec: audioCodec, numberOfChannels: 2, quality: new Quality({ bitrate: preset.audio }), forceTranscode: true },
       })
       const blocking = discardMessage(conversion.discardedTracks)
@@ -72,12 +74,39 @@ async function compress(file, preset, { trim, duration, mute, onProgress, onConv
   }
 }
 
+// The kept area of a social format, drawn over the preview (the video is letterboxed with object-fit: contain)
+function FrameGuide({ video, info, crop }) {
+  const [box, setBox] = useState(null)
+  useEffect(() => {
+    const el = video.current
+    if (!el) return
+    const measure = () => {
+      const s = Math.min(el.clientWidth / info.width, el.clientHeight / info.height)
+      setBox({ s, x: (el.clientWidth - info.width * s) / 2, y: (el.clientHeight - info.height * s) / 2 })
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [info])
+  if (!box) return null
+  return (
+    <div
+      className="frame-guide"
+      aria-hidden="true"
+      style={{ left: box.x + crop.left * box.s, top: box.y + crop.top * box.s, width: crop.width * box.s, height: crop.height * box.s }}
+    />
+  )
+}
+
 export default function VideoTool({ video }) {
   const [info, setInfo] = useState(null)
   const [thumbs, setThumbs] = useState([])
   const [trim, setTrim] = useState(null)
   const [presetId, setPresetId] = useState('standard')
   const [mute, setMute] = useState(false)
+  const [frameId, setFrameId] = useState('original')
+  const [framePos, setFramePos] = useState(0.5)
   const [job, setJob] = useState(null)
   const [out, setOut] = useState(null)
   const [error, setError] = useState('')
@@ -139,7 +168,7 @@ export default function VideoTool({ video }) {
   useEffect(() => {
     setOut((o) => (o && URL.revokeObjectURL(o.url), null))
     setShowResult(false)
-  }, [presetId, mute, trim])
+  }, [presetId, mute, trim, frameId, framePos])
 
   useEffect(() => () => conversion.current?.cancel(), [])
   useEffect(() => () => out && URL.revokeObjectURL(out.url), [out])
@@ -179,6 +208,7 @@ export default function VideoTool({ video }) {
         trim,
         duration: info.duration,
         mute,
+        crop,
         onProgress: (phase, p) => setJob({ phase, p }),
         onConversion: (c) => (conversion.current = c),
       })
@@ -196,7 +226,10 @@ export default function VideoTool({ video }) {
   const clip = trim ? trim.end - trim.start : 0
   const cut = info && trim && (trim.start > 0 || trim.end < info.duration)
   const gain = out ? Math.round((1 - out.bytes / video.file.size) * 100) : null
-  const outSize = info && targetSize(info.width, info.height, preset.height)
+  const frame = FRAMES.find((f) => f.id === frameId)
+  const crop = info && videoCrop(info.width, info.height, frame.ratio, framePos)
+  const outSize = info && (crop ? targetSize(crop.width, crop.height, preset.height) : targetSize(info.width, info.height, preset.height))
+  const slidesSideways = info && frame.ratio && info.width / info.height > frame.ratio
 
   return (
     <motion.main key="video" className="work" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
@@ -214,6 +247,7 @@ export default function VideoTool({ video }) {
             onSeeked={(e) => setTime(e.currentTarget.currentTime)}
             onClick={togglePlay}
           />
+          {crop && !showResult && <FrameGuide video={player} info={info} crop={crop} />}
           <span className="tag tag-r">{showResult ? 'Résultat' : 'Original'}</span>
         </div>
 
@@ -294,11 +328,35 @@ export default function VideoTool({ video }) {
           {outSize && <span className="hint">Sortie MP4 en {outSize.width} × {outSize.height}, H.264{mute ? ', sans son' : ' + AAC'}.</span>}
         </div>
 
-        <label className="switch">
-          <input type="checkbox" checked={mute} onChange={(e) => setMute(e.target.checked)} disabled={!!job} />
-          <span className="track"><motion.span className="thumb" layout transition={spring} /></span>
-          Supprimer le son
-        </label>
+        <div className="field">
+          <span className="field-label">Format</span>
+          <div className="seg" role="radiogroup" aria-label="Format vidéo">
+            {FRAMES.map((f) => (
+              <button key={f.id} type="button" role="radio" aria-checked={f.id === frameId} className="seg-opt" onClick={() => setFrameId(f.id)} disabled={!!job}>
+                {f.id === frameId && <motion.span layoutId="frame-pill" className="seg-pill" transition={spring} />}
+                <span className="seg-text">{f.label}</span>
+              </button>
+            ))}
+          </div>
+          {crop && (
+            <label className="slider">
+              <span className="slider-head">Cadrage</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round(framePos * 100)}
+                onChange={(e) => setFramePos(+e.target.value / 100)}
+                disabled={!!job}
+                style={{ '--p': `${framePos * 100}%` }}
+                aria-valuetext={slidesSideways ? `${Math.round(framePos * 100)} % vers la droite` : `${Math.round(framePos * 100)} % vers le bas`}
+              />
+              <span className="hint">{slidesSideways ? 'Gauche ↔ droite : choisissez la partie de l’image gardée.' : 'Haut ↔ bas : choisissez la partie de l’image gardée.'}</span>
+            </label>
+          )}
+        </div>
+
+        <Switch checked={mute} onChange={(e) => setMute(e.target.checked)} disabled={!!job} label="Supprimer le son" />
 
         {error && <p className="error" role="alert">{error}</p>}
         {out?.audioLost && <p className="hint">Le son de cette vidéo n’a pas pu être conservé par le navigateur.</p>}

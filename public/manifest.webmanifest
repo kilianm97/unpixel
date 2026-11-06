@@ -13,6 +13,29 @@
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
+  "file_handlers": [
+    {
+      "action": "./",
+      "accept": {
+        "image/png": [".png"],
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/webp": [".webp"],
+        "image/gif": [".gif"],
+        "image/bmp": [".bmp"],
+        "image/svg+xml": [".svg"],
+        "video/mp4": [".mp4", ".m4v"],
+        "video/quicktime": [".mov"],
+        "video/webm": [".webm"],
+        "video/x-matroska": [".mkv"]
+      }
+    }
+  ],
+  "share_target": {
+    "action": "./share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": { "files": [{ "name": "files", "accept": ["image/*", "video/*"] }] }
+  },
   "shortcuts": [
     { "name": "Optimiser une image", "url": "./#image", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
     { "name": "Logo en SVG", "url": "./#svg", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
