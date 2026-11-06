@@ -158,6 +158,8 @@ export default function App() {
   const [dragging, setDragging] = useState(false)
   // Chrome/Edge offer installation through this event; Safari users use "Ajouter au Dock / à l’écran d’accueil".
   const [installPrompt, setInstallPrompt] = useState(null)
+  // Installed app (own window): just the tools. The presentation, FAQ and footer are for the website.
+  const [installedApp] = useState(() => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true)
   // New version deployed: reload right away when nothing is open, otherwise offer it without losing the work.
   const [update, setUpdate] = useState(false)
   const busyWithFile = useRef(false)
@@ -451,7 +453,7 @@ export default function App() {
                 </p>
               )}
             </section>
-            <HomeSections mode={mode} onPick={pickTool} />
+            {!installedApp && <HomeSections mode={mode} onPick={pickTool} />}
           </motion.main>
         ) : mode === 'video' ? (
           <Suspense key={video.url} fallback={<main className="work" aria-busy="true" />}>
@@ -489,7 +491,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <Footer onInstall={installPrompt ? install : null} onPickTool={pickTool} />
+      {!installedApp && <Footer onInstall={installPrompt ? install : null} onPickTool={pickTool} />}
       <CookieBanner />
 
       <AnimatePresence>
