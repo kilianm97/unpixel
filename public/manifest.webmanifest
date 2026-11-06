@@ -1,0 +1,21 @@
+{
+  "name": "unpixel",
+  "short_name": "unpixel",
+  "description": "Optimisez vos images, vectorisez vos logos et compressez vos vidéos, sans rien envoyer en ligne.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fff7f9",
+  "theme_color": "#ED1B54",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Optimiser une image", "url": "./#image", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "Logo en SVG", "url": "./#svg", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "Compresser une vidéo", "url": "./#video", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
+  ]
+}

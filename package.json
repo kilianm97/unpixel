@@ -1,0 +1,25 @@
+{
+  "name": "trace-logo-svg",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node scripts/selftest.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "esm-potrace-wasm": "^0.5.1",
+    "mediabunny": "^1.62.1",
+    "motion": "^14.10.0",
+    "react": "^19.3.1",
+    "react-colorful": "^5.8.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.2.1",
+    "vite": "^8.3.6"
+  },
+  "type": "module",
+  "private": true
+}

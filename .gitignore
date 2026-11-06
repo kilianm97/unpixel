@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+
+# Claude Code (local assistant files, never published)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
