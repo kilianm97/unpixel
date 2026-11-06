@@ -4,7 +4,7 @@ import { seedPalette, labelPixels, dropBackground, mask, colorLayers, assembleSv
 import { dragRect, spanRect, cropPixels, isFull, FULL, MIN } from '../src/crop.js'
 import { psnr, findQuality } from '../src/compress.js'
 import { parseConsent, serializeConsent, consentMode, wantsGtm, isGtmId, isTrackingCookie, cookieDomains } from '../src/consent.js'
-import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, isVideoFile } from '../src/videoPresets.js'
+import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, isVideoFile, sampleEntryCodes, unreadableVideoMessage } from '../src/videoPresets.js'
 
 // Red ring + red center dot on white; white disc inside the ring. Edges get a few anti-aliasing pixels.
 const w = 120, h = 120
@@ -80,6 +80,13 @@ assert.ok(isFull(FULL) && !isFull({ x: 0, y: 0, w: 0.99, h: 1 }))
 const box = mask(Uint8Array.from({ length: 36 }, (_, p) => (p % 6 >= 1 && p % 6 <= 4 && p >= 6 && p < 30 ? 0 : 255)), 6, 6, 0)
 assert.equal(edgeCount(box, 6), 15, 'contour pixels counted')
 assert.equal(edgeCount(new Uint8ClampedArray(36 * 4).fill(255), 6), 0, 'empty mask has no contour')
+
+// Unreadable video: name the real codec
+const stsdBox = (code) => Uint8Array.from([0, 0, 0, 40, ...Buffer.from('stsd'), 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 24, ...Buffer.from(code), 0, 0, 0, 0])
+assert.deepEqual(sampleEntryCodes(Uint8Array.from([...stsdBox('ap4h'), ...stsdBox('tmcd')])), ['ap4h', 'tmcd'])
+assert.match(unreadableVideoMessage(['ap4h', 'tmcd']), /ProRes/)
+assert.match(unreadableVideoMessage(['hvc1']), /HEVC/)
+assert.match(unreadableVideoMessage([]), /H\.264/)
 
 // Recolor: one pass, no chaining
 const two = '<path fill="#ed1b54" d="M0 0z"/><path fill="#ffffff" d="M1 1z"/>'

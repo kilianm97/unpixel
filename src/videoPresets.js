@@ -36,6 +36,29 @@ export function fmtTime(t) {
   return `${String(Math.floor(d / 600)).padStart(2, '0')}:${((d % 600) / 10).toFixed(1).padStart(4, '0')}`
 }
 
+// Codec of an MP4/MOV, from the 4-letter code of its first video sample entry ("stsd" box).
+// Used to explain *why* the browser can't read a file, instead of guessing.
+export function sampleEntryCodes(bytes) {
+  const codes = []
+  const tag = [0x73, 0x74, 0x73, 0x64] // "stsd"
+  for (let i = 0; i + 20 <= bytes.length; i++) {
+    if (bytes[i] !== tag[0] || bytes[i + 1] !== tag[1] || bytes[i + 2] !== tag[2] || bytes[i + 3] !== tag[3]) continue
+    // stsd: type(4) version/flags(4) count(4) entry size(4) entry type(4)
+    codes.push(String.fromCharCode(...bytes.subarray(i + 16, i + 20)))
+  }
+  return codes
+}
+
+const CODEC_HELP = [
+  [/^ap(4h|4x|ch|cn|cs|co)$/, 'Cette vidéo est en Apple ProRes, un format de montage qu’aucun navigateur ne sait lire. Exportez-la en H.264 (MP4) depuis votre logiciel de montage, puis déposez ce fichier.'],
+  [/^(hvc1|hev1)$/, 'Cette vidéo est en HEVC (H.265), que votre navigateur ne sait pas lire sur cet ordinateur. Essayez avec Chrome ou Edge à jour, ou exportez-la en H.264 (MP4).'],
+  [/^(dvh1|dvhe)$/, 'Cette vidéo est en Dolby Vision, que votre navigateur ne sait pas lire. Exportez-la en H.264 (MP4).'],
+]
+export function unreadableVideoMessage(codes) {
+  for (const code of codes) for (const [re, msg] of CODEC_HELP) if (re.test(code)) return msg
+  return 'Votre navigateur ne sait pas lire le codec de cette vidéo. Exportez-la en H.264 (MP4), puis déposez ce fichier.'
+}
+
 // LightVid caps the video bitrate with -maxrate; true when a quantizer-based encode went over that cap.
 export const overCap = (bytes, seconds, preset, muted) =>
   seconds > 0 && (bytes * 8) / seconds - (muted ? 0 : preset.audio) > preset.maxrate * 1.15

@@ -4,7 +4,7 @@ import {
   Input, BlobSource, ALL_FORMATS, Output, Mp4OutputFormat, BufferTarget, Conversion, Quality, CanvasSink,
   canEncodeAudio, ConversionCanceledError, UnsupportedInputFormatError,
 } from 'mediabunny'
-import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime } from './videoPresets.js'
+import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, sampleEntryCodes, unreadableVideoMessage } from './videoPresets.js'
 
 const spring = { type: 'spring', stiffness: 260, damping: 30 }
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -17,11 +17,19 @@ function readable(e) {
   return e?.message || String(e)
 }
 
+// Names the real codec (ProRes, HEVC…) from the file header; MOV files often keep it at the end.
+async function codecHelp(file) {
+  const n = 4 * 1024 * 1024
+  const part = async (a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer())
+  const codes = sampleEntryCodes(await part(0, n))
+  if (file.size > n) codes.push(...sampleEntryCodes(await part(file.size - n, file.size)))
+  return unreadableVideoMessage(codes)
+}
+
 function discardMessage(discarded) {
   const video = discarded.find((d) => d.track.isVideoTrack())
   if (!video) return null
-  if (video.reason === 'undecodable_source_codec')
-    return 'Votre navigateur ne sait pas lire le codec de cette vidéo (souvent du HEVC/H.265). Essayez avec Chrome ou Edge à jour, ou réexportez-la en H.264.'
+  if (video.reason === 'undecodable_source_codec') return unreadableVideoMessage([])
   if (video.reason === 'no_encodable_target_codec') return 'Votre navigateur ne sait pas encoder en H.264. Essayez avec Chrome ou Edge à jour.'
   return 'Cette vidéo ne peut pas être convertie.'
 }
@@ -92,7 +100,7 @@ export default function VideoTool({ video }) {
         if (!alive) return
         setInfo({ duration, width: track.displayWidth, height: track.displayHeight })
         setTrim({ start: 0, end: duration })
-        if (!(await track.canDecode())) throw new Error(discardMessage([{ track, reason: 'undecodable_source_codec' }]))
+        if (!(await track.canDecode())) throw new Error(await codecHelp(video.file))
         const h = 72, w = Math.max(1, Math.round((h * track.displayWidth) / track.displayHeight))
         const sink = new CanvasSink(track, { width: w, height: h, fit: 'cover' })
         const list = []
