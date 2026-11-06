@@ -2,7 +2,7 @@ import { Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence, useMotionValue, useMotionValueEvent, useTransform, animate } from 'motion/react'
 import { cropPixels, isFull, FULL } from './crop.js'
 import { Cropper } from './Cropper.jsx'
-import { FORMATS, formatOf, fmt, draw, toBlob, exportImage, decode, MAX_SIDE } from './imageExport.js'
+import { FORMATS, fmt, draw, toBlob, exportImage, decode, MAX_SIDE } from './imageExport.js'
 import { Batch } from './Batch.jsx'
 import logoUrl from './logo.svg'
 import { HomeSections, InstallIcon } from './Home.jsx'
@@ -97,7 +97,7 @@ export default function App() {
   const [batch, setBatch] = useState(null) // several images processed together: [{ id, file, url }]
   const [mode, setModeState] = useState(toolFromHash)
   const [opts, setOpts] = useState({ colors: 8, detail: 3, smooth: 2, corners: 2, transparent: true })
-  const [out, setOut] = useState({ format: 'png', compression: 'optimal', quality: 80 })
+  const [out, setOut] = useState({ format: 'webp', compression: 'optimal', quality: 80 })
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [result, setResult] = useState(null)
   const [raster, setRaster] = useState(null)
@@ -186,7 +186,7 @@ export default function App() {
         ),
       )
       setSize({ w: p.w, h: p.h })
-      setOut((o) => ({ ...o, format: formatOf(d.type) }))
+      setOut((o) => ({ ...o, format: 'webp' })) // the lightest at equal quality, readable everywhere
       setRecolor({})
       setResult(null)
       setRaster(null)

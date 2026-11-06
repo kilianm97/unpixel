@@ -6,7 +6,6 @@ export const FORMATS = {
   jpeg: { type: 'image/jpeg', label: 'JPG', ext: 'jpg', lossy: true },
   webp: { type: 'image/webp', label: 'WebP', ext: 'webp', lossy: true },
 }
-export const formatOf = (type) => Object.keys(FORMATS).find((k) => FORMATS[k].type === type) ?? 'png'
 export const fmt = (b) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} Ko` : `${(b / 1024 / 1024).toFixed(1).replace('.', ',')} Mo`)
 
 export function draw(img, r, w, h, background) {
