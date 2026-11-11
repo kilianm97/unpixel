@@ -20,20 +20,29 @@ export function freePath(dir, stem, ext, exists = existsSync) {
   }
 }
 
+// A network share (\\server\share) would send files off this computer and can leak Windows credentials,
+// and device paths (\\.\, \\?\) are not files: only local paths are accepted.
+export const isRemotePath = (abs) => /^[\\/]{2}/.test(abs)
+function local(p) {
+  const abs = path.resolve(p)
+  if (isRemotePath(abs)) throw new Error('les chemins réseau (\\\\serveur\\partage) ne sont pas acceptés, seulement les fichiers de cet ordinateur')
+  return abs
+}
+
 export function gainText(before, after) {
   const gain = Math.round((1 - after / before) * 100)
   return `${fmt(before)} → ${fmt(after)} (${gain > 0 ? `−${gain} %` : 'plus lourd que l’original'})`
 }
 
 async function outputDir(src, output_dir) {
-  const dir = output_dir ? path.resolve(output_dir) : path.dirname(src)
+  const dir = output_dir ? local(output_dir) : path.dirname(src)
   await mkdir(dir, { recursive: true })
   return dir
 }
 
 // Optional resize, then the lightest quality with no visible difference (or the one asked for).
 export async function optimizeImage(file, { format = 'webp', quality, width, output_dir } = {}) {
-  const src = path.resolve(file)
+  const src = local(file)
   const before = (await stat(src)).size
   let img = sharp(src).rotate() // upright like in a browser (EXIF orientation)
   if (width) img = img.resize({ width, withoutEnlargement: true })
@@ -61,6 +70,8 @@ export function ffmpegArgs(src, dest, preset, { start, end, mute } = {}) {
   const height = preset.height ? `min(${preset.height},ih)` : 'ih' // never upscaled
   return [
     '-hide_banner', '-loglevel', 'error', '-n', // -n: never overwrite
+    // A playlist renamed .mp4 could make ffmpeg open other files or addresses: real video containers, local files only
+    '-protocol_whitelist', 'file', '-format_whitelist', 'mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,flv,asf',
     ...(start != null ? ['-ss', String(start)] : []),
     ...(end != null ? ['-to', String(end)] : []),
     '-i', src,
@@ -85,7 +96,7 @@ const run = (cmd, args) =>
 
 // shortcut: no progress notifications, a very long video can hit the MCP client's tool timeout; send ffmpeg -progress as notifications if that happens.
 export async function compressVideo(file, { preset: id = 'standard', start, end, mute, output_dir } = {}) {
-  const src = path.resolve(file)
+  const src = local(file)
   if (!VIDEO_EXT.includes(path.extname(src).slice(1).toLowerCase())) throw new Error(`ce n’est pas une vidéo (${VIDEO_EXT.join(', ')})`)
   if (start != null && end != null && end <= start) throw new Error('la fin de la coupe doit être après le début')
   if (!ffmpegPath) throw new Error('ffmpeg n’est pas disponible pour ce système')

@@ -4,7 +4,7 @@ import { seedPalette, labelPixels, dropBackground, mask, colorLayers, assembleSv
 import { dragRect, spanRect, cropPixels, isFull, FULL, MIN, CROP_PRESETS, fractionAspect, fitAspect, dragRectAspect, spanRectAspect } from '../src/crop.js'
 import { psnr, findQuality } from '../src/compress.js'
 import { batchSize, uniqueNames } from '../src/imageExport.js'
-import { freePath, ffmpegArgs } from '../mcp/tools.mjs'
+import { freePath, ffmpegArgs, isRemotePath } from '../mcp/tools.mjs'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import fs from 'node:fs'
@@ -194,7 +194,11 @@ const taken = new Set([path.join('d', 'a.webp'), path.join('d', 'a-2.webp')])
 assert.equal(freePath('d', 'a', 'webp', (p) => taken.has(p)), path.join('d', 'a-3.webp'))
 assert.equal(freePath('d', 'b', 'webp', () => false), path.join('d', 'b.webp'))
 const cut = ffmpegArgs('in.mov', 'out.mp4', PRESETS[0], { start: 2, end: 5.5, mute: true }).join(' ')
-assert.ok(cut.startsWith('-hide_banner -loglevel error -n -ss 2 -to 5.5 -i in.mov '), 'cut before the input, never overwrite')
+assert.ok(cut.startsWith('-hide_banner -loglevel error -n ') && cut.includes(' -ss 2 -to 5.5 -i in.mov '), 'cut before the input, never overwrite')
+assert.ok(cut.indexOf('-protocol_whitelist file -format_whitelist mov,mp4,') < cut.indexOf(' -i '), 'local video containers only')
+// Network shares and device paths are refused (they would take files off this computer)
+assert.ok(isRemotePath('\\\\srv\\share\\a.jpg') && isRemotePath(path.win32.resolve('//srv/share/a.jpg')) && isRemotePath('\\\\?\\C:\\a.jpg') && isRemotePath('\\\\.\\PhysicalDrive0'))
+assert.ok(!isRemotePath('C:\\photos\\a.jpg') && !isRemotePath('/home/me/a.jpg') && !isRemotePath(path.resolve('a.jpg')))
 assert.ok(cut.includes("scale=-2:'trunc(min(720,ih)/2)*2'") && cut.includes('-crf 28 -maxrate 1000000 -bufsize 2000000'))
 assert.ok(cut.includes(' -an ') && !cut.includes('aac'), 'muted: no audio track')
 const whole = ffmpegArgs('in.mp4', 'out.mp4', PRESETS[2]).join(' ')
@@ -227,6 +231,16 @@ try {
   assert.ok(fs.statSync(mp4).size < fs.statSync('public/demo/paint.mp4').size)
   assert.ok((await run('compress_video', { path: 'package.json' })).isError)
   assert.ok((await run('compress_video', { path: 'public/demo/paint.mp4', start: 3, end: 1 })).isError)
+  // A file list disguised as a video (it would pull in another file from the disk) is refused, and leaves nothing behind
+  const fake = path.join(tmp, 'liste.mp4')
+  fs.writeFileSync(fake, "ffconcat version 1.0\nfile 'bmg_paint-720.mp4'\n")
+  assert.ok((await run('compress_video', { path: fake })).isError, 'disguised file list refused')
+  assert.ok(!fs.existsSync(path.join(tmp, 'bmg_liste-1080.mp4')))
+  assert.ok((await run('optimize_images', { paths: ['\\\\srv\\share\\a.jpg'] })).isError)
+  if (process.platform === 'win32') {
+    const share = await run('optimize_images', { paths: ['public/demo/studio.jpg'], output_dir: '\\\\srv\\share\\out' })
+    assert.ok(share.isError && said(share).includes('chemins réseau'), 'never written to a network share')
+  }
 } finally {
   await mcp.close()
   fs.rmSync(tmp, { recursive: true, force: true })
