@@ -4,6 +4,12 @@ import { seedPalette, labelPixels, dropBackground, mask, colorLayers, assembleSv
 import { dragRect, spanRect, cropPixels, isFull, FULL, MIN, CROP_PRESETS, fractionAspect, fitAspect, dragRectAspect, spanRectAspect } from '../src/crop.js'
 import { psnr, findQuality } from '../src/compress.js'
 import { batchSize, uniqueNames } from '../src/imageExport.js'
+import { freePath, ffmpegArgs } from '../mcp/tools.mjs'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { parseConsent, serializeConsent, consentMode, wantsGtm, isGtmId, isTrackingCookie, cookieDomains } from '../src/consent.js'
 import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, isVideoFile, sampleEntryCodes, unreadableVideoMessage, videoCrop } from '../src/videoPresets.js'
 
@@ -182,5 +188,48 @@ assert.deepEqual(batchSize(4000, 3000), { w: 4000, h: 3000 })
 assert.deepEqual(batchSize(10000, 20000), { w: 4000, h: 8000 })
 assert.deepEqual(uniqueNames(['../../evil.webp', 'C:\\x.webp', '.webp']), ['_.._evil.webp', 'C__x.webp', 'webp'])
 assert.deepEqual(uniqueNames(['a.webp', 'A.webp', 'b.webp', 'a.webp', 'a-2.webp']), ['a.webp', 'A-2.webp', 'b.webp', 'a-3.webp', 'a-2-2.webp'])
+
+// MCP server: output names never overwrite, and the ffmpeg command is the LightVid recipe
+const taken = new Set([path.join('d', 'a.webp'), path.join('d', 'a-2.webp')])
+assert.equal(freePath('d', 'a', 'webp', (p) => taken.has(p)), path.join('d', 'a-3.webp'))
+assert.equal(freePath('d', 'b', 'webp', () => false), path.join('d', 'b.webp'))
+const cut = ffmpegArgs('in.mov', 'out.mp4', PRESETS[0], { start: 2, end: 5.5, mute: true }).join(' ')
+assert.ok(cut.startsWith('-hide_banner -loglevel error -n -ss 2 -to 5.5 -i in.mov '), 'cut before the input, never overwrite')
+assert.ok(cut.includes("scale=-2:'trunc(min(720,ih)/2)*2'") && cut.includes('-crf 28 -maxrate 1000000 -bufsize 2000000'))
+assert.ok(cut.includes(' -an ') && !cut.includes('aac'), 'muted: no audio track')
+const whole = ffmpegArgs('in.mp4', 'out.mp4', PRESETS[2]).join(' ')
+assert.ok(whole.includes("scale=-2:'trunc(ih/2)*2'") && whole.includes('-c:a aac -b:a 128000 -ac 2') && !whole.includes('-ss'))
+
+// MCP server, for real: start it, list its tools and run both on the demo files through the protocol
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'unpixel-mcp-'))
+const mcp = new Client({ name: 'selftest', version: '1.0.0' })
+await mcp.connect(new StdioClientTransport({ command: process.execPath, args: ['mcp/server.mjs'] }))
+try {
+  const { tools } = await mcp.listTools()
+  assert.deepEqual(tools.map((t) => t.name), ['optimize_images', 'compress_video'])
+  assert.deepEqual(tools.map((t) => t.inputSchema.required), [['paths'], ['path']], 'only the files are required')
+  const said = (r) => r.content[0].text
+  const run = (name, args) => mcp.callTool({ name, arguments: args }, undefined, { timeout: 120000 })
+
+  const webp = path.join(tmp, 'studio.webp')
+  const images = await run('optimize_images', { paths: ['public/demo/studio.jpg', 'package.json'], output_dir: tmp })
+  assert.ok(!images.isError && said(images).includes(webp) && said(images).includes('package.json : échec'), 'a bad file does not stop the others')
+  assert.equal(fs.readFileSync(webp).subarray(8, 12).toString(), 'WEBP')
+  assert.ok(fs.statSync(webp).size < fs.statSync('public/demo/studio.jpg').size, 'lighter than the original')
+  await run('optimize_images', { paths: ['public/demo/studio.jpg'], output_dir: tmp })
+  assert.ok(fs.existsSync(path.join(tmp, 'studio-2.webp')), 'a second run never overwrites the first')
+  assert.ok((await run('optimize_images', { paths: ['package.json'] })).isError, 'nothing worked: an error')
+
+  const mp4 = path.join(tmp, 'bmg_paint-720.mp4')
+  const video = await run('compress_video', { path: 'public/demo/paint.mp4', preset: 'light', start: 1, end: 3, output_dir: tmp })
+  assert.ok(!video.isError && said(video).includes(mp4), said(video))
+  assert.deepEqual(sampleEntryCodes(fs.readFileSync(mp4)), ['avc1'], 'H.264 in an MP4')
+  assert.ok(fs.statSync(mp4).size < fs.statSync('public/demo/paint.mp4').size)
+  assert.ok((await run('compress_video', { path: 'package.json' })).isError)
+  assert.ok((await run('compress_video', { path: 'public/demo/paint.mp4', start: 3, end: 1 })).isError)
+} finally {
+  await mcp.close()
+  fs.rmSync(tmp, { recursive: true, force: true })
+}
 
 console.log('selftest ok')
