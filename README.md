@@ -1,6 +1,6 @@
 # unpixel
 
-Optimiser des images, vectoriser des logos, compresser des vidéos et des PDF, sans rien envoyer en ligne : tout est traité sur votre ordinateur.
+Compresser des images, des vidéos et des PDF, vectoriser des logos, créer des GIF, sans rien envoyer en ligne : tout est traité sur votre ordinateur.
 
 Le site : https://kilianm97.github.io/unpixel/
 

@@ -251,6 +251,40 @@ assert.deepEqual(uniqueNames(['a.webp', 'A.webp', 'b.webp', 'a.webp', 'a-2.webp'
   assert.deepEqual(unpredictPng(Uint8Array.from(encoded), bpp, rowLen), plainRows)
 }
 
+// GIF: unchanged pixels become transparent and show the previous frame (dispose 1), so a moving square on a still
+// photo decodes right on every frame, and the file is far lighter than storing each frame whole.
+{
+  const { GIF_PRESETS, createGif, gifPalette, gifTimes, gifSize } = await import('../src/gif.js')
+  const W = 240, H = 135, N = 12
+  const bg = await sharp('public/demo/studio.jpg').resize(W, H).ensureAlpha().raw().toBuffer()
+  const frames = Array.from({ length: N }, (_, i) => {
+    const f = Uint8ClampedArray.from(bg)
+    for (let p = 0; p < W * H; p++) for (let c = 0; c < 3; c++) f[p * 4 + c] += ((p * 7919 + i * 104729) % 5) - 2 // sensor noise
+    for (let y = 50; y < 80; y++) for (let x = 10 + i * 15; x < 40 + i * 15; x++) f.set([237, 27, 84], (y * W + x) * 4)
+    return f
+  })
+  const preset = GIF_PRESETS.find((p) => p.id === 'standard')
+  const encode = (p) => {
+    const gif = createGif(gifPalette([frames[0], frames[6]], p.colors), W, H, p)
+    frames.forEach((f) => gif.add(f))
+    return gif.finish().bytes
+  }
+  const bytes = encode(preset)
+  assert.ok(bytes.length < encode({ ...preset, threshold: -1 }).length / 3, 'storing only what moves makes it far lighter')
+  const meta = await sharp(bytes, { animated: true }).metadata()
+  assert.equal(meta.pages, N)
+  assert.equal(meta.delay[0], 80, '12 images/s, rounded to GIF hundredths')
+  const raw = await sharp(bytes, { animated: true }).raw().toBuffer()
+  const px = (f, x, y) => [...raw.subarray((f * H * W + y * W + x) * meta.channels, (f * H * W + y * W + x) * meta.channels + 3)]
+  const near = (a, b, tol) => a.every((v, i) => Math.abs(v - b[i]) <= tol)
+  assert.ok(near(px(10, 175, 65), [237, 27, 84], 12), 'the square is where it moved')
+  assert.ok(near(px(10, 20, 65), [...bg.subarray((65 * W + 20) * 4, (65 * W + 20) * 4 + 3)], 40), 'where it was, the photo is back')
+  assert.equal(gifTimes(2, 3, 12).length, 12)
+  assert.deepEqual(gifSize(1920, 1080, 480), { width: 480, height: 270 })
+  assert.deepEqual(gifSize(1080, 1920, 480), { width: 270, height: 480 }, 'vertical: the longest side is capped')
+  assert.deepEqual(gifSize(200, 100, 480), { width: 200, height: 100 }, 'never upscaled')
+}
+
 // MCP server: output names never overwrite, and the ffmpeg command is the LightVid recipe
 const taken = new Set([path.join('d', 'a.webp'), path.join('d', 'a-2.webp')])
 assert.equal(freePath('d', 'a', 'webp', (p) => taken.has(p)), path.join('d', 'a-3.webp'))

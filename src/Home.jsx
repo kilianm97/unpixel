@@ -18,8 +18,8 @@ const fmt = (b) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} Ko` 
 // Every claim below matches what the tools really do.
 const FEATURES = {
   image: {
-    tab: 'Images',
-    try: 'Essayer l’outil Images',
+    tab: 'Image',
+    try: 'Essayer Compresser une image',
     title: 'Allégez vos images, sans perte visible.',
     lead: 'unpixel essaie plusieurs réglages et garde le plus léger qui reste identique à l’œil. La démo ci-contre est calculée en direct, dans votre navigateur.',
     points: [
@@ -29,7 +29,7 @@ const FEATURES = {
     ],
   },
   svg: {
-    tab: 'Logo en SVG',
+    tab: 'Logo',
     try: 'Essayer Logo en SVG',
     title: 'Glissez pour unpixeliser.',
     lead: 'Un PNG devient flou quand on l’agrandit. unpixel redessine votre logo en courbes vectorielles : il reste net de la carte de visite à la bâche de 3 mètres.',
@@ -51,6 +51,18 @@ const FEATURES = {
       ['MP4 H.264 + AAC', 'lisible sur tous les appareils et réseaux sociaux.'],
     ],
   },
+  gif: {
+    tab: 'GIF',
+    try: 'Essayer Vidéo en GIF',
+    title: 'Un GIF léger, sans perdre en netteté.',
+    lead: 'Choisissez un passage de votre vidéo. unpixel n’enregistre, d’une image à l’autre, que ce qui bouge vraiment : le GIF reste net et pèse bien moins lourd.',
+    points: [
+      ['Une palette pour tout le GIF', 'des couleurs stables, sans scintillement entre les images.'],
+      ['Seul ce qui bouge est enregistré', 'le décor fixe n’est stocké qu’une fois.'],
+      ['Vertical ou carré', 'pour les stories et les messageries, en un clic.'],
+    ],
+    tip: 'Un GIF est fait pour quelques secondes : au-delà, une vidéo MP4 est bien plus légère.',
+  },
   pdf: {
     tab: 'PDF',
     try: 'Essayer l’outil PDF',
@@ -69,7 +81,7 @@ const FAQ = [
   ['Est-ce vraiment gratuit ?', 'Oui. Pas de compte, pas d’abonnement, pas de filigrane sur vos fichiers.'],
   [
     'Mes fichiers sont-ils envoyés quelque part ?',
-    'Non. Images, logos, vidéos et PDF sont traités dans votre navigateur, sur votre ordinateur. Ils ne passent jamais par un serveur.',
+    'Non. Images, logos, vidéos, GIF et PDF sont traités dans votre navigateur, sur votre ordinateur. Ils ne passent jamais par un serveur.',
   ],
   [
     'Est-ce que la qualité baisse ?',
@@ -77,7 +89,7 @@ const FAQ = [
   ],
   [
     'Quels formats sont acceptés ?',
-    'Images : PNG, JPG, WebP, GIF, BMP et SVG. Vidéos : MP4, MOV, MKV et WebM. Et les PDF. Vous exportez en PNG, JPG, WebP, SVG, MP4 ou PDF.',
+    'Images : PNG, JPG, WebP, GIF, BMP et SVG. Vidéos : MP4, MOV, MKV et WebM. Et les PDF. Vous exportez en PNG, JPG, WebP, SVG, MP4, GIF ou PDF.',
   ],
   [
     'Est-ce que ça marche sans internet ?',
@@ -85,7 +97,7 @@ const FAQ = [
   ],
   [
     'Quels navigateurs sont pris en charge ?',
-    'unpixel est conçu et testé pour Chrome et Edge à jour, qui gèrent les quatre outils, vidéo comprise.',
+    'unpixel est conçu et testé pour Chrome et Edge à jour, qui gèrent tous les outils, vidéo comprise.',
   ],
 ]
 
@@ -108,7 +120,7 @@ function Features({ mode, onPick }) {
   return (
     <section className="features" aria-labelledby="features-title">
       <motion.h2 id="features-title" {...reveal()}>
-        Quatre outils, un seul endroit.
+        Cinq outils, un seul endroit.
       </motion.h2>
       <motion.div className="seg features-tabs" role="tablist" aria-label="Fonctionnalités" {...reveal(0.08)}>
         {Object.entries(FEATURES).map(([id, x]) => (
@@ -156,7 +168,7 @@ function Features({ mode, onPick }) {
               </button>
             )}
           </div>
-          {tab === 'image' ? <ImageDemo /> : tab === 'svg' ? <LogoDemo /> : tab === 'pdf' ? <PdfDemo /> : <VideoDemo />}
+          {tab === 'image' ? <ImageDemo /> : tab === 'svg' ? <LogoDemo /> : tab === 'pdf' ? <PdfDemo /> : tab === 'gif' ? <GifDemo /> : <VideoDemo />}
         </motion.div>
       </AnimatePresence>
     </section>
@@ -389,7 +401,7 @@ const FRAMES = 30 // preview resolution of the timeline (every 3rd one is shown 
 const GAP = 0.1 // smallest selection, as a fraction of the clip
 
 // Frames grabbed once by seeking a hidden <video>: no extra library on the homepage
-async function grabFrames(src, count, alive) {
+async function grabFrames(src, count, alive, span) {
   const v = document.createElement('video')
   v.muted = true
   v.preload = 'auto'
@@ -397,7 +409,7 @@ async function grabFrames(src, count, alive) {
   await new Promise((ok, fail) => ((v.onloadeddata = ok), (v.onerror = fail)))
   const out = []
   for (let i = 0; i < count && alive(); i++) {
-    v.currentTime = ((i + 0.5) / count) * v.duration
+    v.currentTime = ((i + 0.5) / count) * (span ?? v.duration)
     await new Promise((ok) => (v.onseeked = ok))
     const c = document.createElement('canvas')
     c.width = 480
@@ -409,6 +421,52 @@ async function grabFrames(src, count, alive) {
   v.removeAttribute('src')
   v.load()
   return { frames: out, duration }
+}
+
+/* GIF: the first 4 s of the demo clip, made into a GIF with the Standard preset right now, on this computer */
+function GifDemo() {
+  const [res, setRes] = useState(null)
+  useEffect(() => {
+    let alive = true
+    let url
+    ;(async () => {
+      const { GIF_PRESETS, gifPalette, createGif, gifSize } = await import('./gif.js')
+      const preset = GIF_PRESETS.find((p) => p.id === 'standard')
+      const { frames } = await grabFrames(CLIP.src, 4 * preset.fps, () => alive, 4)
+      if (!alive) return
+      const { width, height } = gifSize(frames[0].width, frames[0].height, preset.size)
+      const pixels = frames.map((c) => c.getContext('2d').getImageData(0, 0, width, height).data)
+      const gif = createGif(gifPalette(pixels.filter((_, i) => i % 6 === 0), preset.colors), width, height, preset)
+      pixels.forEach((p) => gif.add(p))
+      const { bytes } = gif.finish()
+      url = URL.createObjectURL(new Blob([bytes], { type: 'image/gif' }))
+      if (alive) setRes({ url, size: bytes.length, frames: frames.length, width, height })
+    })().catch(() => alive && setRes({ failed: true }))
+    return () => {
+      alive = false
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [])
+  return (
+    <div className="demo">
+      <div className="demo-stage">
+        {res?.url && <img className="demo-art" src={res.url} alt="Le GIF créé à partir du début de la vidéo d’exemple" />}
+        <span className="tag tag-r">{res?.size ? `GIF ${fmt(res.size)}` : 'GIF'}</span>
+      </div>
+      <p className="demo-caption" aria-live="polite">
+        {!res
+          ? 'Création du GIF sur votre ordinateur…'
+          : res.failed
+            ? 'L’exemple n’a pas pu être calculé dans ce navigateur.'
+            : `4 secondes de vidéo, ${res.frames} images en ${res.width} × ${res.height}, réglage Standard. Créé à l’instant sur votre ordinateur.`}
+      </p>
+      <p className="demo-credit">
+        <a href={CLIP.href} target="_blank" rel="noopener">
+          {CLIP.credit}
+        </a>
+      </p>
+    </div>
+  )
 }
 
 const tenths = (s) => s.toFixed(1).replace('.', ',')

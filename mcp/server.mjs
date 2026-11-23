@@ -16,7 +16,7 @@ const output_dir = z.string().optional().describe('Dossier de sortie, créé si 
 server.registerTool(
   'optimize_images',
   {
-    title: 'Optimiser des images',
+    title: 'Compresser des images',
     description:
       'Compresse et convertit des images du disque (PNG, JPG, WebP, GIF, AVIF, TIFF) en WebP, JPG ou PNG. Sans « quality », choisit pour chaque image le réglage le plus léger sans différence visible. Crée de nouveaux fichiers et ne modifie jamais les originaux. Tout se passe sur cet ordinateur, rien n’est envoyé en ligne.',
     inputSchema: {

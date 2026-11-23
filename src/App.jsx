@@ -8,6 +8,8 @@ import logoUrl from './logo.svg'
 import { HomeSections, InstallIcon } from './Home.jsx'
 import { Footer } from './Footer.jsx'
 import { Segmented, Switch, Slider } from './ui.jsx'
+import { ToolMenu } from './ToolMenu.jsx'
+import { TOOL_INFO, toolFromHash as toolFromHashOf } from './tools.js'
 import { CookieBanner } from './CookieBanner.jsx'
 import { ColorSwatch } from './ColorPicker.jsx'
 import { recolorSvg } from './trace.js'
@@ -41,23 +43,8 @@ const region = (img, crop) =>
   crop ? cropPixels(crop, img.naturalWidth, img.naturalHeight) : { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight }
 
 
-// [id, label, short label for small screens]
-const TOOLS = [
-  ['image', 'Optimiser une image', 'Images'],
-  ['svg', 'Logo en SVG', 'Logo SVG'],
-  ['video', 'Compresser une vidéo', 'Vidéo'],
-  ['pdf', 'Compresser un PDF', 'PDF'],
-]
-const TOOL_TABS = TOOLS.map(([id, label, short]) => [
-  id,
-  <>
-    <span className="label-long">{label}</span>
-    <span className="label-short" aria-hidden="true">
-      {short}
-    </span>
-  </>,
-])
-const toolFromHash = () => ({ '#svg': 'svg', '#video': 'video', '#pdf': 'pdf' })[location.hash] ?? 'image'
+const toolFromHash = () => toolFromHashOf(location.hash)
+const usesVideo = (m) => m === 'video' || m === 'gif' // the GIF tool starts from a video and shares its editor
 
 const HERO = {
   image: {
@@ -73,6 +60,11 @@ const HERO = {
   video: {
     title: 'Des vidéos légères, prêtes à partager.',
     text: 'Coupez et compressez vos vidéos en MP4, lisible partout. Vos fichiers ne quittent jamais votre ordinateur.',
+    drop: 'Déposez votre vidéo ici',
+  },
+  gif: {
+    title: 'Un GIF léger, net et fluide.',
+    text: 'Choisissez un passage de votre vidéo : unpixel en fait un GIF animé, le plus léger possible pour sa qualité. Vos fichiers ne quittent jamais votre ordinateur.',
     drop: 'Déposez votre vidéo ici',
   },
   pdf: {
@@ -107,6 +99,8 @@ export default function App() {
   const [pdf, setPdf] = useState(null)
   const [batch, setBatch] = useState(null) // several images processed together: [{ id, file, url }]
   const [mode, setModeState] = useState(toolFromHash)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   const [opts, setOpts] = useState({ colors: 8, detail: 3, smooth: 2, corners: 2, transparent: true })
   const [out, setOut] = useState({ format: 'webp', compression: 'optimal', quality: 80 })
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -183,7 +177,7 @@ export default function App() {
 
   async function open(file, forMode = mode) {
     setError('')
-    if (forMode === 'video') {
+    if (usesVideo(forMode)) {
       if (!isVideoFile(file)) return setError('Ce fichier n’est pas une vidéo. Utilisez un MP4, MOV, MKV ou WebM.')
       return setVideo((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url: URL.createObjectURL(file), name: file.name }))
     }
@@ -225,7 +219,7 @@ export default function App() {
   }
 
   const resetRef = useRef(null)
-  const loaded = mode === 'video' ? video : mode === 'pdf' ? pdf : (batch ?? src)
+  const loaded = usesVideo(mode) ? video : mode === 'pdf' ? pdf : (batch ?? src)
   busyWithFile.current = !!loaded
   resetRef.current = loaded ? reset : null
   function reset() {
@@ -287,7 +281,7 @@ export default function App() {
     const route = (files) => {
       const videos = files.filter(isVideoFile)
       const pdfs = files.filter(isPdfFile)
-      if (videos.length) openRef.current(videos, 'video')
+      if (videos.length) openRef.current(videos, usesVideo(modeRef.current) ? modeRef.current : 'video') // a video shared while on the GIF tool stays there
       else if (pdfs.length) openRef.current(pdfs, 'pdf')
       else openRef.current(files, 'image')
     }
@@ -373,15 +367,13 @@ export default function App() {
           <span className="brand">{brand}</span>
         )}
         {loaded ? (
-          <span className="tool-name">{TOOLS.find(([k]) => k === mode)[1]}</span>
+          <span className="tool-name">{TOOL_INFO[mode].label}</span>
         ) : (
-          <nav className="tools" aria-label="Outils">
-            <Segmented label="Outil" value={mode} onChange={setMode} options={TOOL_TABS} />
-          </nav>
+          <ToolMenu mode={mode} onPick={setMode} />
         )}
         {loaded ? (
           <button className="ghost" onClick={() => fileInput.current.click()}>
-            {mode === 'video' ? 'Changer de vidéo' : mode === 'pdf' ? 'Changer de PDF' : batch ? 'Ajouter des images' : 'Changer d’image'}
+            {usesVideo(mode) ? 'Changer de vidéo' : mode === 'pdf' ? 'Changer de PDF' : batch ? 'Ajouter des images' : 'Changer d’image'}
           </button>
         ) : (
           installPrompt && (
@@ -402,7 +394,7 @@ export default function App() {
         ref={fileInput}
         type="file"
         accept={
-          mode === 'video'
+          usesVideo(mode)
             ? 'video/*,.mkv,.mov,.avi,.flv,.wmv'
             : mode === 'pdf'
               ? 'application/pdf,.pdf'
@@ -447,10 +439,10 @@ export default function App() {
                 </motion.div>
               </AnimatePresence>
               <DropZone dragging={dragging} onClick={() => fileInput.current.click()}>
-                {mode === 'svg' ? <Curve key="svg" /> : mode === 'video' ? <Reel key="video" /> : mode === 'pdf' ? <Pages key="pdf" /> : <CropMarks key="image" />}
+                {mode === 'svg' ? <Curve key="svg" /> : usesVideo(mode) ? <Reel key="video" /> : mode === 'pdf' ? <Pages key="pdf" /> : <CropMarks key="image" />}
                 <span className="drop-title">{dragging ? 'Lâchez pour ouvrir' : HERO[mode].drop}</span>
                 <span className="drop-hint">
-                  {mode === 'video'
+                  {usesVideo(mode)
                     ? 'ou cliquez pour choisir un fichier MP4, MOV, MKV ou WebM.'
                     : mode === 'pdf'
                       ? 'ou cliquez pour choisir un fichier PDF.'
@@ -473,9 +465,9 @@ export default function App() {
           <Suspense key={pdf.url} fallback={<main className="work" aria-busy="true" />}>
             <PdfTool pdf={pdf} />
           </Suspense>
-        ) : mode === 'video' ? (
+        ) : usesVideo(mode) ? (
           <Suspense key={video.url} fallback={<main className="work" aria-busy="true" />}>
-            <VideoTool video={video} />
+            <VideoTool video={video} gif={mode === 'gif'} />
           </Suspense>
         ) : (
           <motion.main key="work" className="work" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={spring}>

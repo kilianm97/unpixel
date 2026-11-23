@@ -13,6 +13,7 @@
     "esm-potrace-wasm": "^0.5.1",
     "fflate": "^0.8.3",
     "ffmpeg-static": "^5.3.0",
+    "gifenc": "^1.0.3",
     "mediabunny": "^1.62.1",
     "motion": "^14.10.0",
     "pdf-lib": "^1.17.1",

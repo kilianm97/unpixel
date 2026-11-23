@@ -1,7 +1,7 @@
 {
   "name": "unpixel",
   "short_name": "unpixel",
-  "description": "Optimisez vos images, vectorisez vos logos, compressez vos vidéos et vos PDF, sans rien envoyer en ligne.",
+  "description": "Optimisez vos images, vectorisez vos logos, compressez vos vidéos et vos PDF, créez des GIF, sans rien envoyer en ligne.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",
@@ -38,9 +38,10 @@
     "params": { "files": [{ "name": "files", "accept": ["image/*", "video/*", "application/pdf", ".pdf"] }] }
   },
   "shortcuts": [
-    { "name": "Optimiser une image", "url": "./#image", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "Compresser une image", "url": "./#image", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
     { "name": "Logo en SVG", "url": "./#svg", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
     { "name": "Compresser une vidéo", "url": "./#video", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "Vidéo en GIF", "url": "./#gif", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
     { "name": "Compresser un PDF", "url": "./#pdf", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
   ]
 }

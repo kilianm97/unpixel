@@ -5,6 +5,7 @@ import {
   canEncodeAudio, ConversionCanceledError, UnsupportedInputFormatError,
 } from 'mediabunny'
 import { Switch } from './ui.jsx'
+import { GIF_PRESETS, MAX_GIF_SECONDS, gifSize, gifTimes, gifPalette, createGif } from './gif.js'
 import { PRESETS, outputName, targetSize, overCap, clampTrim, fmtTime, sampleEntryCodes, unreadableVideoMessage, FRAMES, videoCrop } from './videoPresets.js'
 
 const spring = { type: 'spring', stiffness: 260, damping: 30 }
@@ -74,6 +75,31 @@ async function compress(file, preset, { trim, duration, mute, crop, onProgress, 
   }
 }
 
+// Video to GIF: a first look at a few frames picks the palette, then every frame is added at the preset's rate.
+// shortcut: encodes on the main thread between decoded frames (the page stays usable, but slower than a worker); move to a worker if long clips stutter.
+async function makeGif(file, preset, { trim, crop, onProgress, cancelled }) {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS })
+  try {
+    const track = await input.getPrimaryVideoTrack()
+    const { width, height } = gifSize(crop?.width ?? track.displayWidth, crop?.height ?? track.displayHeight, preset.size)
+    const sink = new CanvasSink(track, { width, height, fit: 'fill', crop: crop ?? undefined })
+    const pixels = (c) => c.canvas.getContext('2d').getImageData(0, 0, width, height).data
+    const times = gifTimes(trim.start, trim.end, preset.fps)
+    const samples = []
+    for await (const c of sink.canvasesAtTimestamps([0, 1, 2, 3, 4, 5, 6, 7].map((i) => times[Math.floor((i * times.length) / 8)]))) c && samples.push(pixels(c))
+    const gif = createGif(gifPalette(samples, preset.colors), width, height, preset)
+    let done = 0
+    for await (const c of sink.canvasesAtTimestamps(times)) {
+      if (cancelled()) throw Object.assign(new Error('annulé'), { cancelled: true })
+      if (c) gif.add(pixels(c))
+      onProgress('gif', ++done / times.length)
+    }
+    return { blob: new Blob([gif.finish().bytes], { type: 'image/gif' }), width, height, frames: times.length }
+  } finally {
+    input.dispose()
+  }
+}
+
 // The kept area of a social format, drawn over the preview (the video is letterboxed with object-fit: contain)
 function FrameGuide({ video, info, crop }) {
   const [box, setBox] = useState(null)
@@ -99,7 +125,7 @@ function FrameGuide({ video, info, crop }) {
   )
 }
 
-export default function VideoTool({ video }) {
+export default function VideoTool({ video, gif }) {
   const [info, setInfo] = useState(null)
   const [thumbs, setThumbs] = useState([])
   const [trim, setTrim] = useState(null)
@@ -115,7 +141,8 @@ export default function VideoTool({ video }) {
   const [showResult, setShowResult] = useState(false)
   const player = useRef(null)
   const conversion = useRef(null)
-  const preset = PRESETS.find((p) => p.id === presetId)
+  const presets = gif ? GIF_PRESETS : PRESETS
+  const preset = presets.find((p) => p.id === presetId)
 
   // Duration, size and filmstrip thumbnails
   useEffect(() => {
@@ -204,19 +231,23 @@ export default function VideoTool({ video }) {
     player.current?.pause()
     setJob({ phase: 'encode', p: 0 })
     try {
-      const r = await compress(video.file, preset, {
-        trim,
-        duration: info.duration,
-        mute,
-        crop,
-        onProgress: (phase, p) => setJob({ phase, p }),
-        onConversion: (c) => (conversion.current = c),
-      })
+      let stop = false
+      if (gif) conversion.current = { cancel: () => (stop = true) }
+      const r = gif
+        ? await makeGif(video.file, preset, { trim, crop, onProgress: (phase, p) => setJob({ phase, p }), cancelled: () => stop })
+        : await compress(video.file, preset, {
+            trim,
+            duration: info.duration,
+            mute,
+            crop,
+            onProgress: (phase, p) => setJob({ phase, p }),
+            onConversion: (c) => (conversion.current = c),
+          })
       setOut({ ...r, url: URL.createObjectURL(r.blob), bytes: r.blob.size })
       setShowResult(true)
       setTime(0)
     } catch (e) {
-      if (!(e instanceof ConversionCanceledError)) setError(readable(e))
+      if (!(e instanceof ConversionCanceledError) && !e.cancelled) setError(readable(e))
     } finally {
       conversion.current = null
       setJob(null)
@@ -228,13 +259,23 @@ export default function VideoTool({ video }) {
   const gain = out ? Math.round((1 - out.bytes / video.file.size) * 100) : null
   const frame = FRAMES.find((f) => f.id === frameId)
   const crop = info && videoCrop(info.width, info.height, frame.ratio, framePos)
-  const outSize = info && (crop ? targetSize(crop.width, crop.height, preset.height) : targetSize(info.width, info.height, preset.height))
+  const outSize =
+    info &&
+    (gif
+      ? gifSize(crop?.width ?? info.width, crop?.height ?? info.height, preset.size)
+      : crop
+        ? targetSize(crop.width, crop.height, preset.height)
+        : targetSize(info.width, info.height, preset.height))
+  const tooLong = gif && clip > MAX_GIF_SECONDS
   const slidesSideways = info && frame.ratio && info.width / info.height > frame.ratio
 
   return (
     <motion.main key="video" className="work" initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={spring}>
       <section className="editor" aria-label="Montage">
         <div className="screen">
+          {gif && showResult ? (
+            <img className="gif-result" src={out.url} alt="Le GIF créé" />
+          ) : (
           <video
             ref={player}
             key={showResult ? 'out' : 'src'}
@@ -247,10 +288,12 @@ export default function VideoTool({ video }) {
             onSeeked={(e) => setTime(e.currentTarget.currentTime)}
             onClick={togglePlay}
           />
+          )}
           {crop && !showResult && <FrameGuide video={player} info={info} crop={crop} />}
           <span className="tag tag-r">{showResult ? 'Résultat' : 'Original'}</span>
         </div>
 
+        {!(gif && showResult) && (
         <div className="transport">
           <motion.button className="play" onClick={togglePlay} whileTap={{ scale: 0.92 }} aria-label={playing ? 'Pause' : 'Lecture'} disabled={!info}>
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
@@ -271,6 +314,7 @@ export default function VideoTool({ video }) {
             </span>
           )}
         </div>
+        )}
 
         {info && trim && !showResult && <Timeline duration={info.duration} trim={trim} setTrim={setTrim} time={time} onSeek={seek} thumbs={thumbs} />}
         {info && trim && !showResult && (
@@ -293,7 +337,14 @@ export default function VideoTool({ video }) {
         <div>
           <h2 className="file" title={video.name}>{video.name}</h2>
           <div className="gain" aria-live="polite">
-            {gain !== null ? (
+            {gif && out ? (
+              <>
+                <strong>{fmtBytes(out.bytes)}</strong>
+                <span>
+                  GIF de {out.frames} images, {out.width} × {out.height}
+                </span>
+              </>
+            ) : gain !== null ? (
               <>
                 <strong data-worse={gain <= 0}>{gain > 0 ? `−${gain} %` : fmtBytes(out.bytes)}</strong>
                 <span>{gain > 0 ? `${fmtBytes(video.file.size)} → ${fmtBytes(out.bytes)}` : `au lieu de ${fmtBytes(video.file.size)}`}</span>
@@ -305,7 +356,7 @@ export default function VideoTool({ video }) {
               </span>
             )}
           </div>
-          {gain !== null && gain <= 0 && (
+          {!gif && gain !== null && gain <= 0 && (
             <p className="hint gain-why">
               {presetId === 'light'
                 ? 'Cette vidéo est déjà très compressée : la garder telle quelle reste le meilleur choix.'
@@ -316,7 +367,7 @@ export default function VideoTool({ video }) {
 
         <div className="field" role="radiogroup" aria-label="Préréglage">
           <span className="field-label">Préréglage</span>
-          {PRESETS.map((p) => (
+          {presets.map((p) => (
             <button key={p.id} type="button" role="radio" aria-checked={p.id === presetId} className="preset" onClick={() => setPresetId(p.id)} disabled={!!job}>
               {p.id === presetId && <motion.span layoutId="preset-pill" className="preset-pill" transition={spring} />}
               <span className="preset-text">
@@ -325,7 +376,13 @@ export default function VideoTool({ video }) {
               </span>
             </button>
           ))}
-          {outSize && <span className="hint">Sortie MP4 en {outSize.width} × {outSize.height}, H.264{mute ? ', sans son' : ' + AAC'}.</span>}
+          {outSize && (
+            <span className="hint">
+              {gif
+                ? `GIF en ${outSize.width} × ${outSize.height}, ${preset.fps} images/s, ${preset.colors} couleurs.`
+                : `Sortie MP4 en ${outSize.width} × ${outSize.height}, H.264${mute ? ', sans son' : ' + AAC'}.`}
+            </span>
+          )}
         </div>
 
         <div className="field">
@@ -356,7 +413,12 @@ export default function VideoTool({ video }) {
           )}
         </div>
 
-        <Switch checked={mute} onChange={(e) => setMute(e.target.checked)} disabled={!!job} label="Supprimer le son" />
+        {!gif && <Switch checked={mute} onChange={(e) => setMute(e.target.checked)} disabled={!!job} label="Supprimer le son" />}
+        {tooLong && (
+          <p className="notice">
+            Un GIF est fait pour quelques secondes : gardez un passage de {MAX_GIF_SECONDS} s au maximum avec les poignées de la frise.
+          </p>
+        )}
 
         {error && <p className="error" role="alert">{error}</p>}
         {out?.audioLost && <p className="hint">Le son de cette vidéo n’a pas pu être conservé par le navigateur.</p>}
@@ -369,7 +431,7 @@ export default function VideoTool({ video }) {
                   <motion.span style={{ width: `${job.p * 100}%` }} transition={reduced() ? { duration: 0 } : undefined} />
                 </div>
                 <span className="hint">
-                  {job.phase === 'cap' ? 'Ajustement du débit' : 'Compression'} : {Math.round(job.p * 100)} %
+                  {job.phase === 'gif' ? 'Création du GIF' : job.phase === 'cap' ? 'Ajustement du débit' : 'Compression'} : {Math.round(job.p * 100)} %
                 </span>
                 <button className="secondary" onClick={() => conversion.current?.cancel()}>
                   Annuler
@@ -377,16 +439,21 @@ export default function VideoTool({ video }) {
               </motion.div>
             ) : out ? (
               <motion.div key="done" className="job" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <motion.a className="primary" href={out.url} download={outputName(video.name, preset)} whileTap={{ scale: 0.97 }}>
-                  Télécharger la vidéo
+                <motion.a
+                  className="primary"
+                  href={out.url}
+                  download={gif ? `${video.name.replace(/\.[^.]+$/, '') || 'video'}.gif` : outputName(video.name, preset)}
+                  whileTap={{ scale: 0.97 }}
+                >
+                  {gif ? 'Télécharger le GIF' : 'Télécharger la vidéo'}
                 </motion.a>
                 <button className="secondary" onClick={() => (player.current?.pause(), setShowResult((s) => !s), setTime(0))}>
-                  {showResult ? 'Revenir au montage' : 'Voir le résultat'}
+                  {showResult ? 'Revenir au montage' : gif ? 'Voir le GIF' : 'Voir le résultat'}
                 </button>
               </motion.div>
             ) : (
-              <motion.button key="go" className="primary" onClick={run} disabled={!info || !!error} whileTap={{ scale: 0.97 }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                Compresser la vidéo
+              <motion.button key="go" className="primary" onClick={run} disabled={!info || !!error || tooLong} whileTap={{ scale: 0.97 }} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                {gif ? 'Créer le GIF' : 'Compresser la vidéo'}
               </motion.button>
             )}
           </AnimatePresence>
