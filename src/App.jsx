@@ -189,7 +189,9 @@ export default function App() {
     }
     if (forMode === 'pdf') {
       if (!isPdfFile(file)) return setError('Ce fichier n’est pas un PDF.')
-      return setPdf((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url: URL.createObjectURL(file), name: file.name }))
+      // Typed as PDF whatever the file claims: an HTML file renamed .pdf must never render as a page of this site
+      const url = URL.createObjectURL(new Blob([file], { type: 'application/pdf' }))
+      return setPdf((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url, name: file.name }))
     }
     try {
       const d = await decode(file)

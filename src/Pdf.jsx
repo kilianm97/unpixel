@@ -70,15 +70,16 @@ export default function PdfTool({ pdf }) {
               res && <span>{fmt(pdf.file.size)}, aucun gain possible</span>
             )}
           </div>
-          {res && (
-            <p className="hint gain-why">
-              {res.images === 0
-                ? 'Ce PDF ne contient pas d’image : le texte est déjà léger, il n’y a presque rien à gagner.'
+          {/* Always there, two lines tall: the level selector below never moves while the result comes in */}
+          <p className="hint gain-why pdf-why">
+            {!res
+              ? busy && 'Recherche des images à alléger…'
+              : res.images === 0
+                ? 'Pas d’image dans ce PDF : il n’y a presque rien à gagner.'
                 : res.changed
                   ? `${res.changed} image${res.changed > 1 ? 's' : ''} allégée${res.changed > 1 ? 's' : ''} sur ${res.images}. Le texte reste net.`
-                  : 'Les images de ce PDF sont déjà légères, ou dans un format que unpixel garde tel quel.'}
-            </p>
-          )}
+                  : 'Images déjà légères, ou dans un format gardé tel quel.'}
+          </p>
         </div>
 
         <div className="field">
