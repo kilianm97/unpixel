@@ -11,17 +11,21 @@ import { Segmented, Switch, Slider } from './ui.jsx'
 import { CookieBanner } from './CookieBanner.jsx'
 import { ColorSwatch } from './ColorPicker.jsx'
 import { recolorSvg } from './trace.js'
-// mediabunny only loads for the video tool. If a page left open from an older version asks for a chunk
+// mediabunny and pdf-lib only load with their tool. If a page left open from an older version asks for a chunk
 // that a new deploy removed, reload once onto the new version instead of crashing.
-const VideoTool = lazy(() =>
-  import('./Video.jsx').catch((e) => {
-    if (sessionStorage.getItem('unpixel-reloaded')) throw e
-    sessionStorage.setItem('unpixel-reloaded', '1')
-    location.reload()
-    return new Promise(() => {})
-  }),
-)
+const lazyTool = (load) =>
+  lazy(() =>
+    load().catch((e) => {
+      if (sessionStorage.getItem('unpixel-reloaded')) throw e
+      sessionStorage.setItem('unpixel-reloaded', '1')
+      location.reload()
+      return new Promise(() => {})
+    }),
+  )
+const VideoTool = lazyTool(() => import('./Video.jsx'))
+const PdfTool = lazyTool(() => import('./Pdf.jsx'))
 import { isVideoFile } from './videoPresets.js'
+const isPdfFile = (file) => !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) // here, not from pdfCompress.js: keeps pdf-lib out of the main bundle
 
 // Tracing resolution: upscaled with smoothing (at least 4×, and tiny logos up to ~1000 px), 8 megapixels max,
 // so thresholding recovers the sub-pixel edge position stored in anti-aliasing: straight edges stay straight, curves stay true.
@@ -42,6 +46,7 @@ const TOOLS = [
   ['image', 'Optimiser une image', 'Images'],
   ['svg', 'Logo en SVG', 'Logo SVG'],
   ['video', 'Compresser une vidéo', 'Vidéo'],
+  ['pdf', 'Compresser un PDF', 'PDF'],
 ]
 const TOOL_TABS = TOOLS.map(([id, label, short]) => [
   id,
@@ -52,7 +57,7 @@ const TOOL_TABS = TOOLS.map(([id, label, short]) => [
     </span>
   </>,
 ])
-const toolFromHash = () => ({ '#svg': 'svg', '#video': 'video' })[location.hash] ?? 'image'
+const toolFromHash = () => ({ '#svg': 'svg', '#video': 'video', '#pdf': 'pdf' })[location.hash] ?? 'image'
 
 const HERO = {
   image: {
@@ -69,6 +74,11 @@ const HERO = {
     title: 'Des vidéos légères, prêtes à partager.',
     text: 'Coupez et compressez vos vidéos en MP4, lisible partout. Vos fichiers ne quittent jamais votre ordinateur.',
     drop: 'Déposez votre vidéo ici',
+  },
+  pdf: {
+    title: 'Des PDF légers, faciles à envoyer.',
+    text: 'unpixel allège les images de vos PDF et garde le texte net, pour passer sous la limite de taille des e-mails. Vos fichiers ne quittent jamais votre ordinateur.',
+    drop: 'Déposez votre PDF ici',
   },
 }
 
@@ -94,6 +104,7 @@ export default function App() {
   const [src, setSrc] = useState(null)
   const [recolor, setRecolor] = useState({}) // traced colour → replacement, logo tool only
   const [video, setVideo] = useState(null)
+  const [pdf, setPdf] = useState(null)
   const [batch, setBatch] = useState(null) // several images processed together: [{ id, file, url }]
   const [mode, setModeState] = useState(toolFromHash)
   const [opts, setOpts] = useState({ colors: 8, detail: 3, smooth: 2, corners: 2, transparent: true })
@@ -176,6 +187,10 @@ export default function App() {
       if (!isVideoFile(file)) return setError('Ce fichier n’est pas une vidéo. Utilisez un MP4, MOV, MKV ou WebM.')
       return setVideo((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url: URL.createObjectURL(file), name: file.name }))
     }
+    if (forMode === 'pdf') {
+      if (!isPdfFile(file)) return setError('Ce fichier n’est pas un PDF.')
+      return setPdf((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url: URL.createObjectURL(file), name: file.name }))
+    }
     try {
       const d = await decode(file)
       const p = traceData(d.img)
@@ -208,11 +223,12 @@ export default function App() {
   }
 
   const resetRef = useRef(null)
-  const loaded = mode === 'video' ? video : (batch ?? src)
+  const loaded = mode === 'video' ? video : mode === 'pdf' ? pdf : (batch ?? src)
   busyWithFile.current = !!loaded
   resetRef.current = loaded ? reset : null
   function reset() {
     if (video) URL.revokeObjectURL(video.url), setVideo(null)
+    if (pdf) URL.revokeObjectURL(pdf.url), setPdf(null)
     batch?.forEach((it) => URL.revokeObjectURL(it.url))
     setBatch(null)
     if (!src) return
@@ -268,7 +284,10 @@ export default function App() {
   useEffect(() => {
     const route = (files) => {
       const videos = files.filter(isVideoFile)
-      openRef.current(videos.length ? videos : files, videos.length ? 'video' : 'image')
+      const pdfs = files.filter(isPdfFile)
+      if (videos.length) openRef.current(videos, 'video')
+      else if (pdfs.length) openRef.current(pdfs, 'pdf')
+      else openRef.current(files, 'image')
     }
     window.launchQueue?.setConsumer(async ({ files }) => files?.length && route(await Promise.all(files.map((h) => h.getFile()))))
     // The service worker kept the shared files in a cache and opened ?shared
@@ -360,7 +379,7 @@ export default function App() {
         )}
         {loaded ? (
           <button className="ghost" onClick={() => fileInput.current.click()}>
-            {mode === 'video' ? 'Changer de vidéo' : batch ? 'Ajouter des images' : 'Changer d’image'}
+            {mode === 'video' ? 'Changer de vidéo' : mode === 'pdf' ? 'Changer de PDF' : batch ? 'Ajouter des images' : 'Changer d’image'}
           </button>
         ) : (
           installPrompt && (
@@ -380,7 +399,13 @@ export default function App() {
       <input
         ref={fileInput}
         type="file"
-        accept={mode === 'video' ? 'video/*,.mkv,.mov,.avi,.flv,.wmv' : 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml'}
+        accept={
+          mode === 'video'
+            ? 'video/*,.mkv,.mov,.avi,.flv,.wmv'
+            : mode === 'pdf'
+              ? 'application/pdf,.pdf'
+              : 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml'
+        }
         multiple={mode === 'image'}
         hidden
         onChange={(e) => (openFiles(e.target.files), (e.target.value = ''))}
@@ -420,11 +445,13 @@ export default function App() {
                 </motion.div>
               </AnimatePresence>
               <DropZone dragging={dragging} onClick={() => fileInput.current.click()}>
-                {mode === 'svg' ? <Curve key="svg" /> : mode === 'video' ? <Reel key="video" /> : <CropMarks key="image" />}
+                {mode === 'svg' ? <Curve key="svg" /> : mode === 'video' ? <Reel key="video" /> : mode === 'pdf' ? <Pages key="pdf" /> : <CropMarks key="image" />}
                 <span className="drop-title">{dragging ? 'Lâchez pour ouvrir' : HERO[mode].drop}</span>
                 <span className="drop-hint">
                   {mode === 'video'
                     ? 'ou cliquez pour choisir un fichier MP4, MOV, MKV ou WebM.'
+                    : mode === 'pdf'
+                      ? 'ou cliquez pour choisir un fichier PDF.'
                     : mode === 'image'
                       ? 'Une seule ou toutes d’un coup, regroupées dans un ZIP. Ou cliquez pour choisir.'
                       : 'ou cliquez pour choisir un fichier. Vous pouvez aussi coller une image avec Ctrl+V.'}
@@ -440,6 +467,10 @@ export default function App() {
           </motion.main>
         ) : batch ? (
           <Batch key="batch" items={batch} onRemove={(id) => (URL.revokeObjectURL(batch.find((it) => it.id === id).url), setBatch((b) => (b.length > 1 ? b.filter((it) => it.id !== id) : null)))} />
+        ) : mode === 'pdf' ? (
+          <Suspense key={pdf.url} fallback={<main className="work" aria-busy="true" />}>
+            <PdfTool pdf={pdf} />
+          </Suspense>
         ) : mode === 'video' ? (
           <Suspense key={video.url} fallback={<main className="work" aria-busy="true" />}>
             <VideoTool video={video} />
@@ -819,6 +850,39 @@ function Panel({
         {copied === 'error' ? 'Le presse-papiers est bloqué par le navigateur.' : copied && copied !== 'code' ? `${copied} copié` : ''}
       </p>
     </aside>
+  )
+}
+
+// A page whose picture shrinks while its lines of text stay: the PDF tool's job in one gesture.
+function Pages() {
+  const line = (y, w, delay) => (
+    <motion.path
+      d={`M98 ${y} H${98 + w}`}
+      className="stroke"
+      initial={{ pathLength: 0, opacity: 0 }}
+      animate={{ pathLength: 1, opacity: 1 }}
+      transition={{ duration: reduced() ? 0 : 0.5, delay: reduced() ? 0 : delay, ease: [0.65, 0, 0.35, 1] }}
+    />
+  )
+  return (
+    <svg className="curve" viewBox="0 0 240 140" aria-hidden="true">
+      <path d="M84 12 H140 L156 28 V128 H84 Z M140 12 V28 H156" className="stroke" />
+      <motion.rect
+        x="98"
+        y="30"
+        width="44"
+        height="32"
+        rx="3"
+        className="frame"
+        initial={{ scale: 1.6, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ ...spring, delay: reduced() ? 0 : 0.2 }}
+        style={{ originX: '50%', originY: '50%' }}
+      />
+      {line(80, 44, 0.5)}
+      {line(94, 36, 0.6)}
+      {line(108, 40, 0.7)}
+    </svg>
   )
 }
 

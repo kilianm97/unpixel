@@ -51,13 +51,25 @@ const FEATURES = {
       ['MP4 H.264 + AAC', 'lisible sur tous les appareils et réseaux sociaux.'],
     ],
   },
+  pdf: {
+    tab: 'PDF',
+    try: 'Essayer l’outil PDF',
+    title: 'Allégez vos PDF, gardez le texte net.',
+    lead: 'Dans un PDF, ce sont les photos et les scans qui pèsent. unpixel les ramène à la résolution utile pour l’écran ou l’impression, et ne touche pas au texte.',
+    points: [
+      ['Texte intact', 'lettres, tableaux et dessins restent nets : seules les images sont allégées.'],
+      ['Trois niveaux', 'léger pour l’e-mail, standard, ou impression.'],
+      ['Jamais plus lourd', 'si unpixel ne peut rien gagner, il vous le dit.'],
+    ],
+    tip: 'Un PDF fait surtout de texte est déjà léger : le gain se joue sur les photos et les scans.',
+  },
 }
 
 const FAQ = [
   ['Est-ce vraiment gratuit ?', 'Oui. Pas de compte, pas d’abonnement, pas de filigrane sur vos fichiers.'],
   [
     'Mes fichiers sont-ils envoyés quelque part ?',
-    'Non. Images, logos et vidéos sont traités dans votre navigateur, sur votre ordinateur. Ils ne passent jamais par un serveur.',
+    'Non. Images, logos, vidéos et PDF sont traités dans votre navigateur, sur votre ordinateur. Ils ne passent jamais par un serveur.',
   ],
   [
     'Est-ce que la qualité baisse ?',
@@ -65,7 +77,7 @@ const FAQ = [
   ],
   [
     'Quels formats sont acceptés ?',
-    'Images : PNG, JPG, WebP, GIF, BMP et SVG. Vidéos : MP4, MOV, MKV et WebM. Vous exportez en PNG, JPG, WebP, SVG ou MP4.',
+    'Images : PNG, JPG, WebP, GIF, BMP et SVG. Vidéos : MP4, MOV, MKV et WebM. Et les PDF. Vous exportez en PNG, JPG, WebP, SVG, MP4 ou PDF.',
   ],
   [
     'Est-ce que ça marche sans internet ?',
@@ -73,7 +85,7 @@ const FAQ = [
   ],
   [
     'Quels navigateurs sont pris en charge ?',
-    'unpixel est conçu et testé pour Chrome et Edge à jour, qui gèrent les trois outils, vidéo comprise.',
+    'unpixel est conçu et testé pour Chrome et Edge à jour, qui gèrent les quatre outils, vidéo comprise.',
   ],
 ]
 
@@ -86,7 +98,7 @@ export function HomeSections({ mode, onPick }) {
   )
 }
 
-/* ---------- Three tools, one section ---------- */
+/* ---------- The tools, one section ---------- */
 
 function Features({ mode, onPick }) {
   const [tab, setTab] = useState(mode)
@@ -96,7 +108,7 @@ function Features({ mode, onPick }) {
   return (
     <section className="features" aria-labelledby="features-title">
       <motion.h2 id="features-title" {...reveal()}>
-        Trois outils, un seul endroit.
+        Quatre outils, un seul endroit.
       </motion.h2>
       <motion.div className="seg features-tabs" role="tablist" aria-label="Fonctionnalités" {...reveal(0.08)}>
         {Object.entries(FEATURES).map(([id, x]) => (
@@ -144,7 +156,7 @@ function Features({ mode, onPick }) {
               </button>
             )}
           </div>
-          {tab === 'image' ? <ImageDemo /> : tab === 'svg' ? <LogoDemo /> : <VideoDemo />}
+          {tab === 'image' ? <ImageDemo /> : tab === 'svg' ? <LogoDemo /> : tab === 'pdf' ? <PdfDemo /> : <VideoDemo />}
         </motion.div>
       </AnimatePresence>
     </section>
@@ -289,6 +301,72 @@ function ImageDemo() {
           </>
         ) : (
           'Cette photo est déjà très compressée : unpixel le détecte et vous le dit.'
+        )}
+      </p>
+      <p className="demo-credit">
+        <a href={PHOTO.href} target="_blank" rel="noopener">
+          {PHOTO.credit}
+        </a>
+      </p>
+    </div>
+  )
+}
+
+/* PDF: the same photo placed on an A4 page in print quality (2480 px, JPEG 92), as an office export makes it,
+   then compressed with the Standard level. pdf-lib only loads when this tab is opened. */
+function PdfDemo() {
+  const [res, setRes] = useState(null)
+  useEffect(() => {
+    let alive = true
+    const urls = []
+    ;(async () => {
+      const [{ PDFDocument, PDFName, PDFRawStream, StandardFonts }, { compressPdf, recompressInBrowser, PDF_LEVELS }] = await Promise.all([
+        import('pdf-lib'),
+        import('./pdfCompress.js'),
+      ])
+      const bmp = await createImageBitmap(await (await fetch(PHOTO.src)).blob())
+      const c = new OffscreenCanvas(2480, Math.round((2480 * bmp.height) / bmp.width))
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
+      bmp.close()
+      const print = await c.convertToBlob({ type: 'image/jpeg', quality: 0.92 })
+      const doc = await PDFDocument.create()
+      const page = doc.addPage([595, 842])
+      page.drawImage(await doc.embedJpg(await print.arrayBuffer()), { x: 48, y: 470, width: 499, height: (499 * c.height) / c.width })
+      page.drawText('Le texte d’un PDF reste net, seules les images sont allégées.', { x: 48, y: 430, size: 12, font: await doc.embedFont(StandardFonts.Helvetica) })
+      const before = await doc.save()
+      const r = await compressPdf(before, PDF_LEVELS.find((l) => l.id === 'standard'), recompressInBrowser, () => !alive)
+      if (!alive || !r) return
+      // The photo as it is now stored inside the compressed PDF
+      const [, img] = (await PDFDocument.load(r.bytes)).context
+        .enumerateIndirectObjects()
+        .find(([, o]) => o instanceof PDFRawStream && o.dict.lookup(PDFName.of('Subtype')) === PDFName.of('Image'))
+      urls.push(URL.createObjectURL(print), URL.createObjectURL(new Blob([img.contents], { type: 'image/jpeg' })))
+      setRes({ before: urls[0], after: urls[1], from: before.length, to: r.bytes.length })
+    })().catch(() => alive && setRes({ failed: true }))
+    return () => {
+      alive = false
+      urls.forEach((u) => URL.revokeObjectURL(u))
+    }
+  }, [])
+
+  const gain = res?.to && Math.round((1 - res.to / res.from) * 100)
+  return (
+    <div className="demo">
+      <Before
+        before={res?.before ?? PHOTO.src}
+        after={res?.after}
+        labels={[res?.to ? `PDF ${fmt(res.from)}` : 'PDF', res?.to ? `PDF ${fmt(res.to)}` : 'Compressé']}
+        aria="Comparer la photo du PDF d’origine et celle du PDF compressé"
+      />
+      <p className="demo-caption" aria-live="polite">
+        {!res ? (
+          'Compression en cours sur votre ordinateur…'
+        ) : res.failed ? (
+          'L’exemple n’a pas pu être calculé dans ce navigateur.'
+        ) : (
+          <>
+            <strong>−{gain} %</strong> sur une page A4 avec une photo en qualité impression, niveau Standard. Mesuré à l’instant sur votre ordinateur.
+          </>
         )}
       </p>
       <p className="demo-credit">

@@ -1,7 +1,7 @@
 {
   "name": "unpixel",
   "short_name": "unpixel",
-  "description": "Optimisez vos images, vectorisez vos logos et compressez vos vidéos, sans rien envoyer en ligne.",
+  "description": "Optimisez vos images, vectorisez vos logos, compressez vos vidéos et vos PDF, sans rien envoyer en ligne.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",
@@ -26,7 +26,8 @@
         "video/mp4": [".mp4", ".m4v"],
         "video/quicktime": [".mov"],
         "video/webm": [".webm"],
-        "video/x-matroska": [".mkv"]
+        "video/x-matroska": [".mkv"],
+        "application/pdf": [".pdf"]
       }
     }
   ],
@@ -34,11 +35,12 @@
     "action": "./share",
     "method": "POST",
     "enctype": "multipart/form-data",
-    "params": { "files": [{ "name": "files", "accept": ["image/*", "video/*"] }] }
+    "params": { "files": [{ "name": "files", "accept": ["image/*", "video/*", "application/pdf", ".pdf"] }] }
   },
   "shortcuts": [
     { "name": "Optimiser une image", "url": "./#image", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
     { "name": "Logo en SVG", "url": "./#svg", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
-    { "name": "Compresser une vidéo", "url": "./#video", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
+    { "name": "Compresser une vidéo", "url": "./#video", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "Compresser un PDF", "url": "./#pdf", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
   ]
 }

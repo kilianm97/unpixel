@@ -5,6 +5,10 @@ import { dragRect, spanRect, cropPixels, isFull, FULL, MIN, CROP_PRESETS, fracti
 import { psnr, findQuality } from '../src/compress.js'
 import { batchSize, uniqueNames } from '../src/imageExport.js'
 import { freePath, ffmpegArgs, isRemotePath } from '../mcp/tools.mjs'
+import { compressPdf, unpredictPng, PDF_LEVELS } from '../src/pdfCompress.js'
+import { PDFDocument, PDFName, PDFRawStream, StandardFonts } from 'pdf-lib'
+import sharp from 'sharp'
+import zlib from 'node:zlib'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import fs from 'node:fs'
@@ -188,6 +192,64 @@ assert.deepEqual(batchSize(4000, 3000), { w: 4000, h: 3000 })
 assert.deepEqual(batchSize(10000, 20000), { w: 4000, h: 8000 })
 assert.deepEqual(uniqueNames(['../../evil.webp', 'C:\\x.webp', '.webp']), ['_.._evil.webp', 'C__x.webp', 'webp'])
 assert.deepEqual(uniqueNames(['a.webp', 'A.webp', 'b.webp', 'a.webp', 'a-2.webp']), ['a.webp', 'A-2.webp', 'b.webp', 'a-3.webp', 'a-2-2.webp'])
+
+// PDF: images re-encoded to what the page shows, text and masks untouched, never heavier. sharp stands in for the browser canvas.
+{
+  const recompress = async (src, maxSide, q) => {
+    const img = src.jpeg ? sharp(src.jpeg) : sharp(Buffer.from(src.rgba.buffer), { raw: { width: src.width, height: src.height, channels: 4 } })
+    const { data, info } = await img.resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true }).removeAlpha().toColourspace('srgb').jpeg({ quality: q }).toBuffer({ resolveWithObject: true })
+    return { bytes: new Uint8Array(data), width: info.width, height: info.height }
+  }
+  const imagesOf = async (bytes) =>
+    (await PDFDocument.load(bytes)).context
+      .enumerateIndirectObjects()
+      .filter(([, o]) => o instanceof PDFRawStream && o.dict.lookup(PDFName.of('Subtype')) === PDFName.of('Image'))
+      .map(([, o]) => `${o.dict.lookup(PDFName.of('Width'))}x${o.dict.lookup(PDFName.of('Height'))} ${o.dict.lookup(PDFName.of('Filter'))}`)
+  const doc = await PDFDocument.create()
+  const page = doc.addPage([595, 842]) // A4: 842 pt = 11.7 in
+  page.drawImage(await doc.embedJpg(await sharp('public/demo/studio.jpg').resize(3508).jpeg({ quality: 95 }).toBuffer()), { x: 40, y: 400, width: 515, height: 290 })
+  // A semi-transparent photo as PNG (a flat-colour PNG would stay: JPEG can't beat it, and the tool keeps the lighter one)
+  page.drawImage(await doc.embedPng(await sharp('public/demo/studio.jpg').resize(900, 600).ensureAlpha(0.5).png().toBuffer()), { x: 40, y: 40 })
+  page.drawText('Texte', { font: await doc.embedFont(StandardFonts.Helvetica) })
+  const grey = zlib.deflateSync(Buffer.from(await sharp('public/demo/studio.jpg').grayscale().raw().toBuffer()))
+  page.node.setXObject(PDFName.of('Scan'), doc.context.register(PDFRawStream.of(doc.context.obj({ Type: 'XObject', Subtype: 'Image', Width: 1280, Height: 720, BitsPerComponent: 8, ColorSpace: 'DeviceGray', Filter: 'FlateDecode' }), grey)))
+  page.node.setXObject(PDFName.of('Cmyk'), doc.context.register(PDFRawStream.of(doc.context.obj({ Type: 'XObject', Subtype: 'Image', Width: 300, Height: 200, BitsPerComponent: 8, ColorSpace: 'DeviceCMYK', Filter: 'FlateDecode' }), zlib.deflateSync(Buffer.alloc(300 * 200 * 4, 90)))))
+  const input = await doc.save()
+  const r = await compressPdf(input, PDF_LEVELS.find((l) => l.id === 'standard'), recompress)
+  assert.ok(r.bytes.length < input.length / 4, `much lighter: ${input.length} → ${r.bytes.length}`)
+  assert.equal(r.images, 4, 'the soft mask of the PNG is not counted')
+  assert.deepEqual((await imagesOf(r.bytes)).sort(), [
+    '1280x720 /DCTDecode', // the grey scan
+    '1754x987 /DCTDecode', // 3508 px downscaled to 11.7 in × 150 dpi
+    '300x200 /FlateDecode', // CMYK, kept
+    '900x600 /DCTDecode', // the PNG's colour, as JPEG
+    '900x600 /FlateDecode', // its soft mask, untouched
+  ])
+  // Text only: nothing to gain, the original comes back unchanged
+  const text = await PDFDocument.create()
+  text.addPage().drawText('Bonjour', { font: await text.embedFont(StandardFonts.Helvetica) })
+  const textBytes = await text.save()
+  const same = await compressPdf(textBytes, PDF_LEVELS[0], recompress)
+  assert.ok(same.bytes === textBytes && same.images === 0 && same.changed === 0)
+  // Errors the user can act on
+  const plain = Buffer.from(await text.save({ useObjectStreams: false })).toString('latin1')
+  const locked = Buffer.from(plain.replace(/trailer\s*<</, 'trailer\n<< /Encrypt << /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>'), 'latin1')
+  await assert.rejects(compressPdf(locked, PDF_LEVELS[1], recompress), /protégé par un mot de passe/)
+  await assert.rejects(compressPdf(new TextEncoder().encode('bonjour'), PDF_LEVELS[1], recompress), /Impossible de lire ce PDF/)
+  // PNG predictors: each row filter (None, Sub, Up, Average, Paeth) decodes back to the original
+  const bpp = 3, rowLen = 21, plainRows = Uint8Array.from({ length: rowLen * 5 }, (_, i) => (i * 37 + 11) & 255)
+  const paeth = (a, b, c) => { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); return pa <= pb && pa <= pc ? a : pb <= pc ? b : c }
+  const encoded = []
+  for (let y = 0; y < 5; y++) {
+    encoded.push(y)
+    for (let x = 0; x < rowLen; x++) {
+      const at = (yy, xx) => (yy >= 0 && xx >= 0 ? plainRows[yy * rowLen + xx] : 0)
+      const a = at(y, x - bpp), b = at(y - 1, x), c = at(y - 1, x - bpp)
+      encoded.push((plainRows[y * rowLen + x] - [0, a, b, (a + b) >> 1, paeth(a, b, c)][y]) & 255)
+    }
+  }
+  assert.deepEqual(unpredictPng(Uint8Array.from(encoded), bpp, rowLen), plainRows)
+}
 
 // MCP server: output names never overwrite, and the ffmpeg command is the LightVid recipe
 const taken = new Set([path.join('d', 'a.webp'), path.join('d', 'a-2.webp')])

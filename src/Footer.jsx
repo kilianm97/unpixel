@@ -6,6 +6,7 @@ const TOOL_LINKS = [
   ['image', 'Optimiser une image'],
   ['svg', 'Logo en SVG'],
   ['video', 'Compresser une vidéo'],
+  ['pdf', 'Compresser un PDF'],
 ]
 
 // onPickTool: on the app page, open the tool in place (and scroll up) instead of only changing the URL hash.
@@ -18,7 +19,7 @@ export function Footer({ onInstall, onPickTool }) {
           <a href={at()} aria-label="unpixel, accueil">
             <img src={logoUrl} alt="unpixel" width="132" height="30" />
           </a>
-          <p>Des images, des logos et des vidéos légers, sans que vos fichiers quittent votre ordinateur.</p>
+          <p>Des images, des logos, des vidéos et des PDF légers, sans que vos fichiers quittent votre ordinateur.</p>
         </div>
         <nav aria-label="Outils">
           <h2>Outils</h2>
