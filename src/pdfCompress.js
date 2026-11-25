@@ -1,6 +1,6 @@
 // PDF compression: images make up most of a PDF's weight, so they are downscaled to what the page can show
 // and re-encoded in JPEG. Text, vectors and fonts are left as they are, and so stay sharp.
-import { PDFDocument, PDFName, PDFNumber, PDFArray, PDFDict, PDFRawStream, PDFBool } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFNumber, PDFArray, PDFDict, PDFRawStream, PDFBool } from '@cantoo/pdf-lib'
 import { unzlibSync } from 'fflate'
 
 // dpi: resolution kept for an image covering the largest page. quality: JPEG quality.

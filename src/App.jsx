@@ -26,6 +26,9 @@ const lazyTool = (load) =>
   )
 const VideoTool = lazyTool(() => import('./Video.jsx'))
 const PdfTool = lazyTool(() => import('./Pdf.jsx'))
+const PdfMerge = lazyTool(() => import('./PdfMerge.jsx'))
+const PdfPages = lazyTool(() => import('./PdfPages.jsx'))
+const PdfProtect = lazyTool(() => import('./PdfProtect.jsx'))
 import { isVideoFile } from './videoPresets.js'
 const isPdfFile = (file) => !!file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) // here, not from pdfCompress.js: keeps pdf-lib out of the main bundle
 
@@ -44,6 +47,7 @@ const region = (img, crop) =>
 
 
 const toolFromHash = () => toolFromHashOf(location.hash)
+const usesPdf = (m) => m === 'pdf' || m.startsWith('pdf-')
 const usesVideo = (m) => m === 'video' || m === 'gif' // the GIF tool starts from a video and shares its editor
 
 const HERO = {
@@ -66,6 +70,26 @@ const HERO = {
     title: 'Un GIF léger, net et fluide.',
     text: 'Choisissez un passage de votre vidéo : unpixel en fait un GIF animé, le plus léger possible pour sa qualité. Vos fichiers ne quittent jamais votre ordinateur.',
     drop: 'Déposez votre vidéo ici',
+  },
+  'pdf-merge': {
+    title: 'Plusieurs PDF, un seul fichier.',
+    text: 'Déposez vos PDF, rangez-les dans l’ordre voulu, et récupérez un seul document. Vos fichiers ne quittent jamais votre ordinateur.',
+    drop: 'Déposez vos PDF ici',
+  },
+  'pdf-pages': {
+    title: 'Retirez les pages en trop.',
+    text: 'Voyez toutes les pages de votre PDF et cliquez sur celles à enlever. Vos fichiers ne quittent jamais votre ordinateur.',
+    drop: 'Déposez votre PDF ici',
+  },
+  'pdf-rotate': {
+    title: 'Remettez vos pages à l’endroit.',
+    text: 'Un scan à l’envers, une page couchée : pivotez une page ou tout le document en un clic. Vos fichiers ne quittent jamais votre ordinateur.',
+    drop: 'Déposez votre PDF ici',
+  },
+  'pdf-protect': {
+    title: 'Un mot de passe pour votre PDF.',
+    text: 'Seules les personnes qui ont le mot de passe pourront l’ouvrir. Chiffrement AES-256, le standard actuel. Vos fichiers ne quittent jamais votre ordinateur.',
+    drop: 'Déposez votre PDF ici',
   },
   pdf: {
     title: 'Des PDF légers, faciles à envoyer.',
@@ -96,7 +120,7 @@ export default function App() {
   const [src, setSrc] = useState(null)
   const [recolor, setRecolor] = useState({}) // traced colour → replacement, logo tool only
   const [video, setVideo] = useState(null)
-  const [pdf, setPdf] = useState(null)
+  const [pdfs, setPdfs] = useState(null) // [{ id, file, url, name }]: one file, or the list to merge
   const [batch, setBatch] = useState(null) // several images processed together: [{ id, file, url }]
   const [mode, setModeState] = useState(toolFromHash)
   const modeRef = useRef(mode)
@@ -162,6 +186,21 @@ export default function App() {
     const files = [...list]
     if (!files.length) return
     if (forMode !== mode) resetRef.current?.(), setMode(forMode)
+    if (usesPdf(forMode)) {
+      const list = files.filter(isPdfFile)
+      if (!list.length) return setError('Ce fichier n’est pas un PDF.')
+      setError('')
+      const merge = forMode === 'pdf-merge'
+      // Typed as PDF whatever the file claims: an HTML file renamed .pdf must never render as a page of this site
+      const added = (merge ? list : list.slice(0, 1)).map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        name: file.name,
+        url: URL.createObjectURL(new Blob([file], { type: 'application/pdf' })),
+      }))
+      if (!merge) pdfs?.forEach((p) => URL.revokeObjectURL(p.url))
+      return setPdfs((prev) => (merge ? [...(prev ?? []), ...added] : added))
+    }
     if (forMode === 'image' && (files.length > 1 || batch)) {
       const images = files.filter((f) => f.type.startsWith('image/'))
       if (!images.length) return setError('Ces fichiers ne sont pas des images. Utilisez des PNG, JPG ou WebP.')
@@ -180,12 +219,6 @@ export default function App() {
     if (usesVideo(forMode)) {
       if (!isVideoFile(file)) return setError('Ce fichier n’est pas une vidéo. Utilisez un MP4, MOV, MKV ou WebM.')
       return setVideo((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url: URL.createObjectURL(file), name: file.name }))
-    }
-    if (forMode === 'pdf') {
-      if (!isPdfFile(file)) return setError('Ce fichier n’est pas un PDF.')
-      // Typed as PDF whatever the file claims: an HTML file renamed .pdf must never render as a page of this site
-      const url = URL.createObjectURL(new Blob([file], { type: 'application/pdf' }))
-      return setPdf((prev) => (prev && URL.revokeObjectURL(prev.url), { file, url, name: file.name }))
     }
     try {
       const d = await decode(file)
@@ -219,12 +252,13 @@ export default function App() {
   }
 
   const resetRef = useRef(null)
-  const loaded = usesVideo(mode) ? video : mode === 'pdf' ? pdf : (batch ?? src)
+  const loaded = usesVideo(mode) ? video : usesPdf(mode) ? pdfs : (batch ?? src)
   busyWithFile.current = !!loaded
   resetRef.current = loaded ? reset : null
   function reset() {
     if (video) URL.revokeObjectURL(video.url), setVideo(null)
-    if (pdf) URL.revokeObjectURL(pdf.url), setPdf(null)
+    pdfs?.forEach((p) => URL.revokeObjectURL(p.url))
+    setPdfs(null)
     batch?.forEach((it) => URL.revokeObjectURL(it.url))
     setBatch(null)
     if (!src) return
@@ -282,7 +316,7 @@ export default function App() {
       const videos = files.filter(isVideoFile)
       const pdfs = files.filter(isPdfFile)
       if (videos.length) openRef.current(videos, usesVideo(modeRef.current) ? modeRef.current : 'video') // a video shared while on the GIF tool stays there
-      else if (pdfs.length) openRef.current(pdfs, 'pdf')
+      else if (pdfs.length) openRef.current(pdfs, usesPdf(modeRef.current) ? modeRef.current : 'pdf')
       else openRef.current(files, 'image')
     }
     window.launchQueue?.setConsumer(async ({ files }) => files?.length && route(await Promise.all(files.map((h) => h.getFile()))))
@@ -373,7 +407,7 @@ export default function App() {
         )}
         {loaded ? (
           <button className="ghost" onClick={() => fileInput.current.click()}>
-            {usesVideo(mode) ? 'Changer de vidéo' : mode === 'pdf' ? 'Changer de PDF' : batch ? 'Ajouter des images' : 'Changer d’image'}
+            {usesVideo(mode) ? 'Changer de vidéo' : mode === 'pdf-merge' ? 'Ajouter des PDF' : usesPdf(mode) ? 'Changer de PDF' : batch ? 'Ajouter des images' : 'Changer d’image'}
           </button>
         ) : (
           installPrompt && (
@@ -396,11 +430,11 @@ export default function App() {
         accept={
           usesVideo(mode)
             ? 'video/*,.mkv,.mov,.avi,.flv,.wmv'
-            : mode === 'pdf'
+            : usesPdf(mode)
               ? 'application/pdf,.pdf'
               : 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/svg+xml'
         }
-        multiple={mode === 'image'}
+        multiple={mode === 'image' || mode === 'pdf-merge'}
         hidden
         onChange={(e) => (openFiles(e.target.files), (e.target.value = ''))}
       />
@@ -439,12 +473,14 @@ export default function App() {
                 </motion.div>
               </AnimatePresence>
               <DropZone dragging={dragging} onClick={() => fileInput.current.click()}>
-                {mode === 'svg' ? <Curve key="svg" /> : usesVideo(mode) ? <Reel key="video" /> : mode === 'pdf' ? <Pages key="pdf" /> : <CropMarks key="image" />}
+                {mode === 'svg' ? <Curve key="svg" /> : usesVideo(mode) ? <Reel key="video" /> : usesPdf(mode) ? <Pages key="pdf" /> : <CropMarks key="image" />}
                 <span className="drop-title">{dragging ? 'Lâchez pour ouvrir' : HERO[mode].drop}</span>
                 <span className="drop-hint">
                   {usesVideo(mode)
                     ? 'ou cliquez pour choisir un fichier MP4, MOV, MKV ou WebM.'
-                    : mode === 'pdf'
+                    : mode === 'pdf-merge'
+                      ? 'Plusieurs PDF d’un coup, dans l’ordre de votre choix. Ou cliquez pour choisir.'
+                      : usesPdf(mode)
                       ? 'ou cliquez pour choisir un fichier PDF.'
                     : mode === 'image'
                       ? 'Une seule ou toutes d’un coup, regroupées dans un ZIP. Ou cliquez pour choisir.'
@@ -461,9 +497,27 @@ export default function App() {
           </motion.main>
         ) : batch ? (
           <Batch key="batch" items={batch} onRemove={(id) => (URL.revokeObjectURL(batch.find((it) => it.id === id).url), setBatch((b) => (b.length > 1 ? b.filter((it) => it.id !== id) : null)))} />
+        ) : mode === 'pdf-merge' ? (
+          <Suspense key="merge" fallback={<main className="work" aria-busy="true" />}>
+            <PdfMerge
+              files={pdfs}
+              onChange={(list) => {
+                pdfs.filter((p) => !list?.includes(p)).forEach((p) => URL.revokeObjectURL(p.url))
+                setPdfs(list)
+              }}
+            />
+          </Suspense>
+        ) : mode === 'pdf-rotate' || mode === 'pdf-pages' ? (
+          <Suspense key={pdfs[0].url + mode} fallback={<main className="work" aria-busy="true" />}>
+            <PdfPages pdf={pdfs[0]} action={mode === 'pdf-rotate' ? 'rotate' : 'remove'} />
+          </Suspense>
+        ) : mode === 'pdf-protect' ? (
+          <Suspense key={pdfs[0].url} fallback={<main className="work" aria-busy="true" />}>
+            <PdfProtect pdf={pdfs[0]} />
+          </Suspense>
         ) : mode === 'pdf' ? (
-          <Suspense key={pdf.url} fallback={<main className="work" aria-busy="true" />}>
-            <PdfTool pdf={pdf} />
+          <Suspense key={pdfs[0].url} fallback={<main className="work" aria-busy="true" />}>
+            <PdfTool pdf={pdfs[0]} />
           </Suspense>
         ) : usesVideo(mode) ? (
           <Suspense key={video.url} fallback={<main className="work" aria-busy="true" />}>

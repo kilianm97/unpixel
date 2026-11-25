@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { motion, AnimatePresence, useInView, useMotionValue, useMotionValueEvent, useTransform, animate } from 'motion/react'
 import { findQuality, pixelsOf } from './compress.js'
 import { at } from './base.js'
+import { categoryOf } from './tools.js'
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 const ease = [0.65, 0, 0.35, 1]
@@ -65,15 +66,15 @@ const FEATURES = {
   },
   pdf: {
     tab: 'PDF',
-    try: 'Essayer l’outil PDF',
-    title: 'Allégez vos PDF, gardez le texte net.',
-    lead: 'Dans un PDF, ce sont les photos et les scans qui pèsent. unpixel les ramène à la résolution utile pour l’écran ou l’impression, et ne touche pas au texte.',
+    try: 'Essayer Compresser un PDF',
+    title: 'Tout pour vos PDF, sans les envoyer.',
+    lead: 'Compressez, fusionnez, réorganisez ou protégez vos PDF. Pour la compression, unpixel allège les photos et les scans, qui font le poids d’un PDF, et ne touche pas au texte.',
     points: [
-      ['Texte intact', 'lettres, tableaux et dessins restent nets : seules les images sont allégées.'],
-      ['Trois niveaux', 'léger pour l’e-mail, standard, ou impression.'],
-      ['Jamais plus lourd', 'si unpixel ne peut rien gagner, il vous le dit.'],
+      ['Compression sans perte de texte', 'seules les images sont allégées, et le PDF n’est jamais plus lourd.'],
+      ['Fusionner, pivoter, retirer des pages', 'en voyant chaque page, sans logiciel à installer.'],
+      ['Protéger par mot de passe', 'chiffrement AES-256, le standard actuel.'],
     ],
-    tip: 'Un PDF fait surtout de texte est déjà léger : le gain se joue sur les photos et les scans.',
+    tip: 'Un PDF fait surtout de texte est déjà léger : la compression gagne surtout sur les photos et les scans.',
   },
 }
 
@@ -113,14 +114,16 @@ export function HomeSections({ mode, onPick }) {
 /* ---------- The tools, one section ---------- */
 
 function Features({ mode, onPick }) {
-  const [tab, setTab] = useState(mode)
-  useEffect(() => setTab(mode), [mode])
+  // A tool without its own tab (merge, rotate…) opens the tab of its kind of file
+  const tabOf = (m) => (FEATURES[m] ? m : categoryOf(m).tools.find((t) => FEATURES[t]))
+  const [tab, setTab] = useState(() => tabOf(mode))
+  useEffect(() => setTab(tabOf(mode)), [mode])
   const f = FEATURES[tab]
 
   return (
     <section className="features" aria-labelledby="features-title">
       <motion.h2 id="features-title" {...reveal()}>
-        Cinq outils, un seul endroit.
+        Neuf outils, un seul endroit.
       </motion.h2>
       <motion.div className="seg features-tabs" role="tablist" aria-label="Fonctionnalités" {...reveal(0.08)}>
         {Object.entries(FEATURES).map(([id, x]) => (
@@ -333,7 +336,7 @@ function PdfDemo() {
     const urls = []
     ;(async () => {
       const [{ PDFDocument, PDFName, PDFRawStream, StandardFonts }, { compressPdf, recompressInBrowser, PDF_LEVELS }] = await Promise.all([
-        import('pdf-lib'),
+        import('@cantoo/pdf-lib'),
         import('./pdfCompress.js'),
       ])
       const bmp = await createImageBitmap(await (await fetch(PHOTO.src)).blob())

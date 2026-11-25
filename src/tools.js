@@ -5,12 +5,16 @@ export const TOOL_INFO = {
   video: { label: 'Compresser une vidéo', desc: 'Un MP4 léger, lisible partout' },
   gif: { label: 'Vidéo en GIF', desc: 'Un passage de vidéo en GIF animé léger' },
   pdf: { label: 'Compresser un PDF', desc: 'Images allégées, texte net' },
+  'pdf-merge': { label: 'Fusionner des PDF', desc: 'Plusieurs PDF en un seul, dans l’ordre choisi' },
+  'pdf-pages': { label: 'Supprimer des pages', desc: 'Retirer les pages en trop d’un PDF' },
+  'pdf-rotate': { label: 'Pivoter un PDF', desc: 'Remettre des pages à l’endroit' },
+  'pdf-protect': { label: 'Protéger un PDF', desc: 'Un mot de passe pour l’ouvrir' },
 }
 
 export const CATEGORIES = [
   { id: 'image', label: 'Image', tools: ['image', 'svg'] },
   { id: 'video', label: 'Vidéo', tools: ['video', 'gif'] },
-  { id: 'pdf', label: 'PDF', tools: ['pdf'] },
+  { id: 'pdf', label: 'PDF', tools: ['pdf', 'pdf-merge', 'pdf-pages', 'pdf-rotate', 'pdf-protect'] },
 ]
 
 export const categoryOf = (tool) => CATEGORIES.find((c) => c.tools.includes(tool))

@@ -6,7 +6,7 @@ import { psnr, findQuality } from '../src/compress.js'
 import { batchSize, uniqueNames } from '../src/imageExport.js'
 import { freePath, ffmpegArgs, isRemotePath } from '../mcp/tools.mjs'
 import { compressPdf, unpredictPng, PDF_LEVELS } from '../src/pdfCompress.js'
-import { PDFDocument, PDFName, PDFRawStream, StandardFonts } from 'pdf-lib'
+import { PDFDocument, PDFName, PDFRawStream, StandardFonts } from '@cantoo/pdf-lib'
 import sharp from 'sharp'
 import zlib from 'node:zlib'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -249,6 +249,45 @@ assert.deepEqual(uniqueNames(['a.webp', 'A.webp', 'b.webp', 'a.webp', 'a-2.webp'
     }
   }
   assert.deepEqual(unpredictPng(Uint8Array.from(encoded), bpp, rowLen), plainRows)
+}
+
+// PDF page tools, read back with pdf.js (the engine browsers use): order, rotation, removal, password
+{
+  const { mergePdfs, rotatePages, removePages, protectPdf } = await import('../src/pdfTools.js')
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const { degrees } = await import('@cantoo/pdf-lib')
+  const make = async (label, n, size = [595, 842], rot = 0) => {
+    const d = await PDFDocument.create()
+    const font = await d.embedFont(StandardFonts.Helvetica)
+    for (let i = 0; i < n; i++) {
+      const p = d.addPage(size)
+      p.drawText(`${label}${i + 1}`, { x: 50, y: size[1] - 120, size: 24, font })
+      if (rot) p.setRotation(degrees(rot))
+    }
+    return d.save()
+  }
+  const read = async (bytes, password) => {
+    const doc = await pdfjs.getDocument({ data: bytes.slice(), password, verbosity: 0 }).promise
+    const pages = []
+    for (let i = 1; i <= doc.numPages; i++) {
+      const p = await doc.getPage(i)
+      pages.push(`${(await p.getTextContent()).items.map((t) => t.str).join('')}@${p.rotate}`)
+    }
+    return pages
+  }
+  const A = await make('A', 2), B = await make('B', 3, [842, 595]), C = await make('C', 1, [595, 842], 90)
+  assert.deepEqual(await read(await mergePdfs([C, A, B])), ['C1@90', 'A1@0', 'A2@0', 'B1@0', 'B2@0', 'B3@0'], 'merged in the chosen order')
+  await assert.rejects(mergePdfs([A, new TextEncoder().encode('nope')]), /Fichier 2 : Impossible de lire/)
+  assert.deepEqual(await read(await rotatePages(B, [1, -1, 2])), ['B1@90', 'B2@270', 'B3@180'])
+  assert.deepEqual(await read(await rotatePages(C, [-1])), ['C1@0'], 'adds to the rotation the page already had')
+  assert.deepEqual(await read(await removePages(B, [0, 2])), ['B2@0'])
+  await assert.rejects(removePages(A, [0, 1]), /au moins une page/)
+  const locked = await protectPdf(A, 'Sécurité-123')
+  await assert.rejects(read(locked), /password/i, 'no password: refused')
+  await assert.rejects(read(locked, 'faux'), /password/i, 'wrong password: refused')
+  assert.deepEqual(await read(locked, 'Sécurité-123'), ['A1@0', 'A2@0'])
+  assert.match(new TextDecoder('latin1').decode(locked), /\/V 5[\s\S]*\/R 6[\s\S]*\/CFM \/AESV3/, 'AES-256')
+  await assert.rejects(mergePdfs([locked]), /protégé par un mot de passe/)
 }
 
 // GIF: unchanged pixels become transparent and show the previous frame (dispose 1), so a moving square on a still

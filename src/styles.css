@@ -600,3 +600,43 @@ button.brand { cursor: pointer; }
 .pdf-stage { background: var(--surface); user-select: auto; }
 .pdf-stage iframe { display: block; width: 100%; height: 100%; border: 0; }
 .batch-actions { display: flex; gap: 14px; margin-top: 2px; font-size: 0.9rem; }
+
+/* PDF page tools: a grid of pages to rotate or take out */
+.pages { background: var(--surface); border: 1.5px solid var(--line); border-radius: var(--radius-lg); padding: 18px; min-width: 0; max-height: min(78vh, 900px); overflow-y: auto; }
+.pages-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 18px 14px; }
+.page-card { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.page-box { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: var(--paper); border-radius: 14px; overflow: hidden; }
+.page-sheet { display: grid; place-items: center; }
+.page-canvas { display: block; max-width: 112px; max-height: 112px; width: auto; height: auto; background: #fff; box-shadow: 0 2px 10px -2px rgba(46, 13, 33, 0.25); opacity: 0; transition: opacity 0.25s; }
+.page-canvas[data-ready='true'] { opacity: 1; }
+.page-num { font-size: 0.85rem; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 2ch; text-align: center; }
+.page-tools { display: flex; align-items: center; gap: 6px; }
+.page-tools button { width: 34px; height: 34px; display: grid; place-items: center; border: 1.5px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.page-tools button:hover { background: var(--rose-soft); border-color: var(--rose); }
+.turn-icon { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.page-toggle { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; }
+.page-toggle .page-box { outline: 2px solid transparent; outline-offset: -2px; transition: outline-color 0.15s; }
+.page-toggle:hover .page-box { outline-color: var(--line); }
+.page-toggle[aria-pressed='true'] .page-box { outline-color: var(--rose); }
+.page-toggle[aria-pressed='true'] .page-canvas { opacity: 0.3; }
+.page-removed { position: absolute; inset: 0; display: grid; place-items: center; color: var(--rose-press); font-weight: 700; font-size: 0.9rem; }
+.pages-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pages-actions .ghost { display: inline-flex; align-items: center; gap: 6px; }
+.pages-reset { align-self: flex-start; }
+
+/* PDF merge: the files in merge order, dragged or moved with the arrows */
+.merge-item { cursor: grab; background: var(--surface); }
+.merge-item:active { cursor: grabbing; }
+.merge-grip { flex: none; color: var(--muted); display: grid; place-items: center; }
+.merge-grip svg { fill: currentColor; }
+.merge-thumb { flex: none; width: 52px; height: 52px; display: grid; place-items: center; background: var(--paper); border-radius: 8px; }
+.merge-thumb .page-canvas { max-width: 44px; max-height: 44px; }
+.merge-moves { display: flex; gap: 4px; }
+.merge-moves button { width: 30px; height: 30px; border: 1.5px solid var(--line); border-radius: 50%; background: var(--surface); cursor: pointer; font-weight: 700; color: var(--ink); }
+.merge-moves button:disabled { opacity: 0.35; cursor: default; }
+
+/* PDF protect: password fields */
+.field input[type='password'], .field input[type='text'] { width: 100%; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.field input[aria-invalid='true'] { border-color: var(--rose); }
+.password { display: flex; align-items: center; gap: 10px; }
+.hint[data-error='true'] { color: var(--rose-press); }
